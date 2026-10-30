@@ -1,0 +1,32 @@
+name: Upstream
+
+# These jobs test the package against newer releases than `uv.lock` pins. They are separate from
+# `ci.yml`, so an upstream release that breaks the package does not mark CI or its badge as failing.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # This job upgrades every package, transitive ones too, on each supported Python.
+  latest-all:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: latest-all-${{ matrix.python-version }}
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --upgrade
+      - run: uv run --no-sync pytest

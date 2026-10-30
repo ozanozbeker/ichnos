@@ -1,0 +1,16 @@
+# A rule that ty adds at the warning level fails the hook, as an error does.
+[terminal]
+error-on-warning = true
+
+# These rules are off by default. They are ty's stricter set, without the three that the guide
+# says report false positives and without the `[analysis]` flags:
+# https://docs.astral.sh/ty/coming-from-mypy-or-pyright/#stricter-checking-with-ty
+[rules]
+blanket-ignore-comment = "error"
+dynamic-function-decorator-return = "error"
+missing-type-argument = "error"
+possibly-unresolved-reference = "warn"
+unsound-assignment = "error"
+unsound-return-statement = "error"
+unsound-yield = "error"
+unsupported-dynamic-base = "warn"
