@@ -6,6 +6,8 @@ disable = [
   "MD082",  # No content before the next heading
 ]
 exclude = [
+  # release-please writes it, and its output fails MD012.
+  "CHANGELOG.md",
   # The skill files stay identical to their source repos.
   ".claude",
   # The engineering skills' setup writes these files in its own format, not one sentence per line.
