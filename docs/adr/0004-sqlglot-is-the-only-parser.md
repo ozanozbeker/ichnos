@@ -9,7 +9,7 @@ sqlglot also ships `optimizer.scope` and `lineage`, and sqloxide returns a raw t
 The package depends on pure-Python `sqlglot`, not `sqlglot[c]`.
 The compiled build is 3x faster, but its wheel is 28.6 to 33.9 MB and its Linux wheels need glibc 2.28.
 Where no wheel fits, it builds from source with a C compiler, which a locked-down machine usually lacks.
-A user who wants the speed runs `uvx --with "sqlglot[c]" ichnos`.
+A user who wants the speed runs `uvx "ichnos[c]"`, whose extra installs `sqlglot[c]` ([ADR 0005](0005-runtime-dependencies-stop-at-the-newest-tested-release.md)).
 
 ichnos never subclasses a sqlglot class.
 With `sqlglotc` installed, a parse through a subclass of the Oracle dialect raises `TypeError: interpreted classes cannot inherit from compiled` (sqlglot 30.26.0, run on 2026-11-02).
