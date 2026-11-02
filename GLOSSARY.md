@@ -59,5 +59,9 @@ _Avoid_: join (for the predicate)
 **Evidence**: One observation in one query that supports a claim about a table, a column or a relationship.
 _Avoid_: signal, hint, proof, observation
 
+**Evidence count**: The number of distinct queries that hold evidence for a claim.
+Identical query text counts once.
+_Avoid_: confidence, score, weight
+
 **Ambiguity**: A point where the corpus admits more than one reading, such as an unqualified column in a query over two tables. ichnos records every candidate reading and picks none.
 _Avoid_: conflict, uncertainty, warning
