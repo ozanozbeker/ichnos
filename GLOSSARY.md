@@ -45,8 +45,19 @@ It is never a column of the inferred schema.
 
 **Column reference**: One occurrence of a column name in one query.
 
-**Relationship**: An inferred claim that columns of one table refer to columns of another table, or of the same table.
+**Table reference**: One occurrence of a table in one query, usually named by an alias.
+A query that joins a table to itself holds two table references to it.
+_Avoid_: table instance
+
+**Relationship**: An inferred claim that columns of one table match columns of another table, or of the same table.
+Its direction is a separate claim.
 _Avoid_: edge, link, ref
+
+**Direction**: The claim that one side of a relationship refers to the key of the other side.
+
+**Shared reference**: A relationship whose two sides both refer to the same key column of a third table.
+ichnos flags it and never drops it.
+_Avoid_: sibling join, transitive join
 
 **Foreign key**: A constraint declared in a true schema. ichnos infers relationships, never foreign keys.
 
