@@ -13,6 +13,10 @@ _Avoid_: statement
 A file may hold several queries.
 _Avoid_: workload, query log
 
+**Literal**: A fixed value written in a query, such as `'A'`, `10000` or `DATE '2024-01-01'`.
+A bind variable such as `:customer_id` is not a literal.
+_Avoid_: constant
+
 ## Schemas
 
 **Inferred schema**: The tables, columns and relationships ichnos derives from a corpus.
@@ -73,6 +77,10 @@ _Avoid_: signal, hint, proof, observation
 **Evidence count**: The number of distinct queries that hold evidence for a claim.
 Identical query text counts once.
 _Avoid_: confidence, score, weight
+
+**Observed value**: A literal that a query compares with a column by equality, or assigns to it.
+A column's observed values are never its full set.
+_Avoid_: enum, allowed value, domain, sample value
 
 **Ambiguity**: A point where the corpus admits more than one reading, such as an unqualified column in a query over two tables. ichnos records every candidate reading and picks none.
 _Avoid_: conflict, uncertainty, warning
