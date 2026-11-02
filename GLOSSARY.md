@@ -1,6 +1,6 @@
 # ichnos
 
-ichnos infers a database schema from Oracle SQL queries alone.
+ichnos infers a database schema and its lineage from Oracle SQL queries alone.
 It never connects to the database.
 
 ## Input
@@ -16,6 +16,15 @@ _Avoid_: workload, query log
 **Literal**: A fixed value written in a query, such as `'A'`, `10000` or `DATE '2024-01-01'`.
 A bind variable such as `:customer_id` is not a literal.
 _Avoid_: constant
+
+**Creating query**: A query that creates a table from a `SELECT`: `CREATE TABLE ... AS SELECT`, `CREATE VIEW` or `CREATE MATERIALIZED VIEW`.
+It declares the table's kind and its full column list.
+_Avoid_: DDL, definition
+
+**Report**: A query that reads tables and writes none.
+It is never a table, because no other query can read it.
+Two files that hold the same text are two reports.
+_Avoid_: asset, dashboard, output
 
 ## Schemas
 
@@ -41,7 +50,7 @@ _Avoid_: relation, entity, object
 It is never a table.
 _Avoid_: subquery table, temp table
 
-**Column**: A named attribute of a table that some query references.
+**Column**: A named attribute of a table that some query references or a creating query declares.
 _Avoid_: field, attribute
 
 **Pseudocolumn**: Oracle's term for a value such as `ROWNUM`, `ROWID`, `LEVEL`, `CURRVAL` or `NEXTVAL` that a query reads like a column.
@@ -71,7 +80,7 @@ _Avoid_: sibling join, transitive join
 It is evidence for a relationship, never a relationship itself.
 _Avoid_: join (for the predicate)
 
-**Evidence**: One observation in one query that supports a claim about a table, a column or a relationship.
+**Evidence**: One observation in one query that supports a claim about a table, a column, a relationship or a dependency.
 _Avoid_: signal, hint, proof, observation
 
 **Evidence count**: The number of distinct queries that hold evidence for a claim.
@@ -84,3 +93,19 @@ _Avoid_: enum, allowed value, domain, sample value
 
 **Ambiguity**: A point where the corpus admits more than one reading, such as an unqualified column in a query over two tables. ichnos records every candidate reading and picks none.
 _Avoid_: conflict, uncertainty, warning
+
+## Lineage
+
+**Lineage**: The dependencies ichnos infers from a corpus.
+_Avoid_: data flow, provenance
+
+**Dependency**: An inferred claim that a table or column is derived from another table or column.
+A report and its output columns can be the downstream end, never the upstream end.
+A dependency has no direction, because direction is a claim about a relationship.
+_Avoid_: edge, dep, flow
+
+**Upstream**: The end of a dependency that the other end is derived from: a table or a column.
+_Avoid_: source, parent
+
+**Downstream**: The end of a dependency that is derived: a table, a report or a column.
+_Avoid_: target, child, sink
