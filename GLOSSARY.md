@@ -26,6 +26,10 @@ It is never a table, because no other query can read it.
 Two files that hold the same text are two reports.
 _Avoid_: asset, dashboard, output
 
+**Unparsed query**: A query the parser cannot read.
+ichnos skips it and lists it.
+_Avoid_: invalid query, failed query
+
 ## Schemas
 
 **Inferred schema**: The tables, columns and relationships ichnos derives from a corpus.
