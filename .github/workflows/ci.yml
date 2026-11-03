@@ -19,10 +19,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         # The same versions as the Python classifiers in `pyproject.toml`.
         python: ["3.14", "3.15"]
-    runs-on: ${{ matrix.os }}
+    # Ubuntu only, a departure that `CONTRIBUTING.md` records.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -164,17 +164,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         from: ["ichnos", "ichnos[c]"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
     env:
       UV_PYTHON_PREFERENCE: only-managed
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -184,7 +180,6 @@ jobs:
           version: latest-known
           enable-cache: false
       - run: uv build --wheel
-      # A relative path, because uv on Windows reads no `/d/a/...` path from bash.
       - run: uvx --no-build --from "${FROM} @ ./$(ls dist/ichnos-*.whl)" ichnos dbml tests/fixtures/oracle_synthetic/queries -o out.dbml
         env:
           FROM: ${{ matrix.from }}
