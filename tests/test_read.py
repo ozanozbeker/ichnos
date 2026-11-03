@@ -77,3 +77,12 @@ def test_a_query_ichnos_cannot_read_records_nothing():
     )
     assert graph.tables == ()
     assert len(graph.unparsed) == 4
+
+
+def test_a_subquery_in_an_expression_reads_the_ctes_of_its_query():
+    graph = ichnos.infer(
+        {
+            "q": "WITH c AS (SELECT u.k FROM u) SELECT t.a FROM t WHERE t.b IN (SELECT c.k FROM c) AND t.d = (SELECT c.k FROM c WHERE c.k = :k)"
+        }
+    )
+    assert _columns(graph) == {"T": ["A", "B", "D"], "U": ["K"]}

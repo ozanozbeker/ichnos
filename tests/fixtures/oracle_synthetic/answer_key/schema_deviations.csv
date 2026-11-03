@@ -8,3 +8,14 @@ ambiguity,016_unqualified_columns_in_join: ORDER_ID,ambiguous,"ADR 0001: 016 nam
 ambiguity,016_unqualified_columns_in_join: ORDER_TOTAL,ambiguous,"ADR 0001: 016 names the column unqualified over two tables, so the reference gives evidence to no candidate"
 ambiguity,040_products_per_order: ORDER_LINES,ambiguous,"ADR 0001: an unprefixed name stays its own table, and its qualified namesake is a candidate (README trap: a synonym with the table's own name)"
 ambiguity,040_products_per_order: PRODUCTS,ambiguous,"ADR 0001: an unprefixed name stays its own table, and its qualified namesake is a candidate (README trap: a synonym with the table's own name)"
+key,HR.EMPLOYEES(EMAIL),miss,"ADR 0006: a unique business key such as EMAIL follows no name pattern, and no query shape shows it"
+key,"HR.JOB_HISTORY(EMPLOYEE_ID, START_DATE)",miss,README trap: no query reads HR.JOB_HISTORY
+key,INV.PRODUCTS(SKU),miss,"ADR 0006: a unique business key such as SKU follows no name pattern, and no query shape shows it"
+key,"INV.SHIPMENT_LINES(SHIPMENT_ID, ORDER_ID, LINE_NO)",miss,"ADR 0006: name patterns find no composite key, and no query shape shows this one"
+key,MART.CUSTOMER_SEGMENTS(CUSTOMER_ID),miss,"ADR 0006: CUSTOMER_ID follows no key pattern for CUSTOMER_SEGMENTS, and 049 has no GROUP BY"
+key,"MART.MV_CATEGORY_MONTHLY(SALES_MONTH, CATEGORY_NAME, CURRENCY_CODE)",extra,"ADR 0006: 053's GROUP BY gives grouped key evidence, and the answer key states no constraint on a view"
+key,"MART.ORDER_LINE_FACTS(ORDER_ID, LINE_NO)",miss,"ADR 0006: name patterns find no composite key, and 045 has no GROUP BY"
+key,"SALES.ORDER_LINES(ORDER_ID, LINE_NO)",miss,"ADR 0006: name patterns find no composite key, and no query shape shows this one"
+key,"SALES.ORDER_PROMOTIONS(ORDER_ID, PROMO_ID)",miss,"ADR 0006: name patterns find no composite key, and no query shape shows this one"
+key,SALES.PROMOTIONS(PROMO_CODE),miss,"ADR 0006: a unique business key such as PROMO_CODE follows no name pattern, and no query shape shows it"
+key,SALES.PROMOTIONS(PROMO_ID),miss,ADR 0006: the abbreviated key PROMO_ID follows no name pattern
