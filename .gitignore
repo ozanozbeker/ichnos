@@ -223,3 +223,6 @@ __marimo__/
 great-docs/
 _great_docs_build/
 _freeze/
+
+# The DBML checker installs @dbml/core here with `npm ci`.
+node_modules/

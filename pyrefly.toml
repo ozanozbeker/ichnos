@@ -1,1 +1,3 @@
 preset = "strict"
+# The tests import `answer_key` and `conftest` from tests/.
+search-path = ["tests"]

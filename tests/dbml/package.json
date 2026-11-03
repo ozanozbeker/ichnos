@@ -1,0 +1,9 @@
+{
+  "name": "ichnos-dbml-check",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@dbml/core": "11.0.1",
+    "@dbml/parse": "11.0.1"
+  }
+}

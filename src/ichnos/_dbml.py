@@ -1,0 +1,96 @@
+"""Write a graph as one DBML file, with every evidence count as a custom property (ADR 0011).
+
+The graph module holds the records, and this module turns them into text that `@dbml/core` parses with no diagnostic.
+"""
+
+import re
+from typing import TYPE_CHECKING
+
+from ichnos._graph import Column, Graph, Table, count
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from ichnos._read import Position
+
+_POSITIONS: tuple[Position, ...] = (
+    "select",
+    "where",
+    "join",
+    "group_by",
+    "order_by",
+    "aggregate",
+    "insert",
+    "set",
+)
+# The escape table from issue 20, for every quoted name and string.
+_ESCAPES = str.maketrans(
+    {"\\": "\\\\", '"': '\\"', "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+)
+_BARE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def dbml(graph: Graph) -> str:
+    r"""Write the full DBML file of a graph.
+
+    Parameters
+    ----------
+    graph
+        The graph that `infer` or `read` builds.
+
+    Returns
+    -------
+    :
+        The DBML text, which ends with one `\n`.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer({"q": "SELECT o.order_id FROM sales.orders o"})
+    print(ichnos.dbml(graph))
+    ```
+    """
+    blocks = [_project(graph), *(_table(t) for t in graph.tables)]
+    return "\n\n".join(blocks) + "\n"
+
+
+def _project(graph: Graph) -> str:
+    note = [
+        f"Inferred by ichnos from {len(graph.queries)} queries, with no database connection.",
+        "Counts are distinct queries. A column with no type evidence has the type `unknown`.",
+    ]
+    lines = "\n".join(f"  {line}" for line in note)
+    return (
+        f"Project ichnos {{\n  database_type: 'Oracle'\n  Note: '''\n{lines}\n  '''\n}}"
+    )
+
+
+def _table(table: Table) -> str:
+    settings = _settings([("read", count(table.read)), ("write", count(table.write))])
+    columns = [_column(c) for c in table.columns] or ['  "*" unknown']
+    return f"Table {_table_name(table)}{settings} {{\n" + "\n".join(columns) + "\n}"
+
+
+def _column(column: Column) -> str:
+    counts = [(p, count(column.references.get(p, ()))) for p in _POSITIONS]
+    return f"  {_name(column.name)} unknown{_settings(counts)}"
+
+
+def _settings(counts: Sequence[tuple[str, int]]) -> str:
+    written = [f"{key}: {value}" for key, value in counts if value]
+    return f" [{', '.join(written)}]" if written else ""
+
+
+def _table_name(table: Table) -> str:
+    return (
+        _name(table.name)
+        if table.owner is None
+        else f"{_name(table.owner)}.{_name(table.name)}"
+    )
+
+
+def _name(name: str) -> str:
+    """Quote a name only when DBML needs it."""
+    return name if _BARE.fullmatch(name) else f'"{name.translate(_ESCAPES)}"'

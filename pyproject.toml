@@ -21,21 +21,29 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+  "cyclopts>=5.0.0,<6",
+  "sqlglot>=30.23.0,<30.28",
+]
 
 [project.urls]
 Homepage = "https://github.com/ozanozbeker/ichnos"
 Issues = "https://github.com/ozanozbeker/ichnos/issues"
 Repository = "https://github.com/ozanozbeker/ichnos"
 
+[project.scripts]
+ichnos = "ichnos._cli:main"
+
 [dependency-groups]
 dev = [
   "coverage>=7.17.0",
+  "hypothesis>=6.170.12",
   "prek>=0.5.7",
   "pyrefly>=1.4.0",
   "pytest>=9.1.1",
   "ruff>=0.17.2",
   "rumdl>=0.3.0",
+  "syrupy>=6.1.1",
   "tombi>=1.9.6",
 ]
 # Not in `dev`, so the test and lint jobs skip Quarto's Jupyter stack.
@@ -59,5 +67,7 @@ show_missing = true
 addopts = ["--strict-config", "--strict-markers", "--import-mode=importlib", "-ra"]
 # A new upstream deprecation fails the Dependabot PR that brings it in, before the removal breaks ichnos.
 filterwarnings = ["error"]
+# The tests import `answer_key` and `conftest` from tests/, which importlib mode leaves off `sys.path`.
+pythonpath = ["tests"]
 testpaths = ["tests"]
 xfail_strict = true

@@ -11,7 +11,7 @@ So each range stops at the newest release that CI has tested, or a user gets an 
 
 sqlglot's README says a minor release is backwards-incompatible and only a patch is compatible.
 Major 30 had 34 minors between 2026-03-16 and 2026-10-30, so a `<31` cap protects nothing.
-The sqlglot cap sits one minor above the newest tested minor, starting at `sqlglot>=30.26.0,<30.28`.
+The sqlglot cap sits one minor above the newest tested minor, starting at `sqlglot>=30.23.0,<30.28`.
 cyclopts follows semver, and its last two majors came on 2025-10-20 and 2026-09-23, so its cap is the next major, `<6`.
 
 Dependabot's weekly `uv` group pull request widens a cap once a new release is 7 days old, as it widened `uv_build`'s cap in Epistole.
@@ -21,7 +21,8 @@ A floor rises only in a `deps:` commit, which starts a release, when ichnos need
 Otherwise each floor is the oldest release that the `lowest` job passes, as Epistole's standard sets.
 
 The `c` extra installs `sqlglot[c]`, so `uvx "ichnos[c]"` runs on the compiled build.
-sqlglotc 30.27.0 ships cp314 and cp315 wheels for Windows, macOS and Linux, so the extra needs no compiler.
+sqlglotc ships cp314 and cp315 wheels for Windows, macOS and Linux from 30.23.0, so the extra needs no compiler.
+So the sqlglot floor is 30.23.0, although the tests pass from 30.7.0: sqlglotc 30.7.0 to 30.22.0 lack a cp315 wheel or a Windows cp314 wheel (run on 2026-11-03).
 
 `requires-python` is `>=3.14`.
 uv installs a Python that meets the floor, and it does so on the maintainer's Windows work machine.

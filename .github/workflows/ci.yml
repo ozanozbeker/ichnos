@@ -37,6 +37,13 @@ jobs:
           version: latest-known
           # Every dependency is a pre-built wheel, so a cache hit saves nothing.
           enable-cache: false
+      # The DBML tests parse every text in the `@dbml/core` that `tests/dbml/package-lock.json` pins (ADR 0015).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      # `--ignore-scripts` runs no install script from the npm registry.
+      - run: npm ci --ignore-scripts
+        working-directory: tests/dbml
       # `--no-editable` installs the built wheel, so the tests import what PyPI would get.
       - run: uv sync --locked --no-editable
       - run: uv run --no-sync pytest
@@ -57,6 +64,13 @@ jobs:
           python-version: "3.15"
           version: latest-known
           enable-cache: false
+      # The DBML tests parse every text in the `@dbml/core` that `tests/dbml/package-lock.json` pins (ADR 0015).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      # `--ignore-scripts` runs no install script from the npm registry.
+      - run: npm ci --ignore-scripts
+        working-directory: tests/dbml
       - run: uv sync --locked --no-editable
       - run: uv run --no-sync pytest
 
@@ -75,6 +89,13 @@ jobs:
         with:
           version: latest-known
           enable-cache: false
+      # The DBML tests parse every text in the `@dbml/core` that `tests/dbml/package-lock.json` pins (ADR 0015).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      # `--ignore-scripts` runs no install script from the npm registry.
+      - run: npm ci --ignore-scripts
+        working-directory: tests/dbml
       # `lowest-direct` resolves each transitive dependency to its newest release, so `--exclude-newer` applies Dependabot's cooldown.
       - run: uv sync --resolution lowest-direct --no-editable --exclude-newer '7 days'
       # The suite runs once on Ubuntu here, so this job also checks coverage.

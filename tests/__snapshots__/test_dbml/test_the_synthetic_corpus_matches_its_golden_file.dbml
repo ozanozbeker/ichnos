@@ -1,0 +1,243 @@
+Project ichnos {
+  database_type: 'Oracle'
+  Note: '''
+  Inferred by ichnos from 60 queries, with no database connection.
+  Counts are distinct queries. A column with no type evidence has the type `unknown`.
+  '''
+}
+
+Table CUSTOMERS [read: 1] {
+  CUSTOMER_ID unknown [join: 1]
+  CUSTOMER_NAME unknown [select: 1]
+  CUSTOMER_TYPE unknown [select: 1, where: 1]
+}
+
+Table EMP [read: 1] {
+  DEPARTMENT_ID unknown [join: 1]
+  EMPLOYEE_ID unknown [select: 1]
+  FIRST_NAME unknown [select: 1]
+  HIRE_DATE unknown [where: 1]
+  LAST_NAME unknown [select: 1]
+}
+
+Table ORDERS [read: 1] {
+  CUSTOMER_ID unknown [join: 1]
+  ORDER_DATE unknown [select: 1]
+  ORDER_ID unknown [select: 1]
+}
+
+Table ORDER_LINES [read: 1] {
+  LINE_NO unknown [order_by: 1]
+  ORDER_ID unknown [select: 1, group_by: 1]
+  PRODUCT_ID unknown [join: 1]
+}
+
+Table PRODUCTS [read: 1] {
+  PRODUCT_ID unknown [join: 1]
+  SKU unknown [aggregate: 1]
+}
+
+Table HR.DEPARTMENTS [read: 3] {
+  DEPARTMENT_ID unknown [join: 2]
+  DEPARTMENT_NAME unknown [select: 2, order_by: 1]
+  LOCATION_COUNTRY unknown [where: 1, join: 1]
+  MANAGER_ID unknown [join: 1]
+}
+
+Table HR.EMPLOYEES [read: 5] {
+  EMAIL unknown [join: 1]
+  EMPLOYEE_ID unknown [select: 3, join: 4]
+  FIRST_NAME unknown [select: 1]
+  LAST_NAME unknown [select: 5]
+  MANAGER_ID unknown [join: 1]
+  STATUS unknown [where: 1]
+}
+
+Table HR.EMP_DIRECTORY [read: 1] {
+  DEPT_NAME unknown [select: 1]
+  DEPT_NO unknown [join: 1]
+  FULL_NAME unknown [select: 1]
+  MANAGER_NAME unknown [select: 1]
+  WORK_EMAIL unknown [select: 1]
+}
+
+Table INV.PRODUCTS [read: 7] {
+  CATEGORY_ID unknown [select: 2, join: 1]
+  CREATED_AT unknown [where: 1]
+  LIST_PRICE unknown [select: 1]
+  PRODUCT_ID unknown [select: 2, where: 1, join: 4, aggregate: 1]
+  PRODUCT_NAME unknown [select: 2]
+  SKU unknown [select: 2]
+  STATUS unknown [where: 2]
+}
+
+Table INV.PRODUCT_CATEGORIES [read: 3] {
+  CATEGORY_ID unknown [select: 2, join: 2]
+  CATEGORY_NAME unknown [select: 3, group_by: 1, order_by: 1]
+  PARENT_CATEGORY_ID unknown [where: 2, join: 2]
+}
+
+Table INV.SHIPMENTS [read: 3] {
+  CARRIER unknown [select: 1]
+  ORDER_ID unknown [select: 1]
+  SHIPMENT_ID unknown [select: 1, where: 1, aggregate: 1]
+  SHIP_DATE unknown [select: 1, order_by: 1]
+  STATUS unknown [where: 1]
+  TRACKING_NO unknown [select: 1]
+  WAREHOUSE_ID unknown [select: 1, join: 1]
+}
+
+Table INV.SHIPMENT_LINES [read: 2] {
+  LINE_NO unknown [join: 2]
+  ORDER_ID unknown [join: 2]
+  QTY_SHIPPED unknown [select: 1, where: 1, aggregate: 1]
+  SHIPMENT_ID unknown [where: 1]
+}
+
+Table INV.STOCK_LEVELS [read: 3, write: 2] {
+  PRODUCT_ID unknown [select: 1, join: 2, insert: 1]
+  QTY_ON_HAND unknown [select: 2, where: 1, insert: 1, set: 1]
+  REORDER_POINT unknown [select: 1, where: 1]
+  UPDATED_AT unknown [insert: 1, set: 1]
+  WAREHOUSE_ID unknown [where: 1, join: 2, insert: 1]
+}
+
+Table INV.WAREHOUSES [read: 3] {
+  COUNTRY_CODE unknown [join: 1]
+  ID unknown [select: 1, join: 2]
+  NAME unknown [select: 1]
+  WAREHOUSE_CODE unknown [select: 2, group_by: 1]
+}
+
+Table MART.CUSTOMER_DAILY_SALES [read: 4, write: 1] {
+  CURRENCY_CODE unknown [select: 1, join: 1, group_by: 1, insert: 1]
+  CUSTOMER_ID unknown [select: 2, join: 1, group_by: 1, insert: 1]
+  LINE_COUNT unknown [aggregate: 1, insert: 1, set: 1]
+  NET_AMOUNT unknown [aggregate: 2, insert: 1, set: 1]
+  SALES_DATE unknown [select: 1, where: 3, join: 1, group_by: 1, order_by: 1, aggregate: 1, insert: 1]
+  UNITS unknown [insert: 1, set: 1]
+}
+
+Table MART.CUSTOMER_SEGMENTS [read: 3, write: 1] {
+  NET_AMOUNT_12M unknown [select: 1, aggregate: 1]
+  SEGMENT unknown [select: 2, where: 2, group_by: 1, set: 1]
+}
+
+Table MART.LAPSED_CUSTOMERS [read: 1] {
+  CUSTOMER_ID unknown [select: 1, join: 1]
+}
+
+Table MART.MV_CATEGORY_MONTHLY [read: 1] {
+  CATEGORY_NAME unknown [select: 1, order_by: 1]
+  CURRENCY_CODE unknown [where: 1]
+  NET_AMOUNT unknown [select: 1]
+  ORDER_COUNT unknown [select: 1]
+  SALES_MONTH unknown [select: 1, order_by: 1]
+}
+
+Table MART.ORDER_LINE_FACTS [read: 3, write: 1] {
+  CATEGORY_ID unknown [join: 1]
+  CURRENCY_CODE unknown [select: 3, group_by: 3]
+  CUSTOMER_ID unknown [select: 2, group_by: 2]
+  NET_AMOUNT unknown [aggregate: 3]
+  ORDER_ID unknown [aggregate: 1]
+  SALES_DATE unknown [select: 3, where: 1, group_by: 3]
+  UNITS unknown [aggregate: 2]
+}
+
+Table MART.V_KEY_CUSTOMERS [read: 1] {
+  CUSTOMER_ID unknown [select: 1]
+  CUSTOMER_NAME unknown [select: 1]
+  NET_AMOUNT_12M unknown [select: 1, order_by: 1]
+}
+
+Table REF.COUNTRIES [read: 3] {
+  COUNTRY_CODE unknown [join: 3]
+  COUNTRY_NAME unknown [select: 3, group_by: 1, order_by: 1]
+}
+
+Table REF.CURRENCIES [read: 1] {
+  CURRENCY_CODE unknown [join: 1]
+  CURRENCY_NAME unknown [select: 1, group_by: 1]
+}
+
+Table SALES.CUSTOMERS [read: 11] {
+  ACCOUNT_MANAGER_ID unknown [join: 1]
+  CREATED_AT unknown [select: 1, where: 1]
+  CUSTOMER_ID unknown [select: 6, join: 6, group_by: 1]
+  CUSTOMER_NAME unknown [select: 8, group_by: 1, order_by: 1]
+  EMAIL unknown [select: 3, where: 1, join: 1, group_by: 1]
+  STATUS unknown [where: 2]
+}
+
+Table SALES.CUSTOMER_ADDRESSES [read: 1] {
+  ADDRESS_ID unknown [join: 1]
+  CITY unknown [select: 1]
+  COUNTRY_CODE unknown [where: 1, join: 1]
+}
+
+Table SALES.MV_DAILY_SALES [read: 1] {
+  CURRENCY_CODE unknown [select: 1]
+  ORDER_COUNT unknown [select: 1]
+  REVENUE unknown [select: 1]
+  SALES_DATE unknown [select: 1, where: 1, order_by: 1]
+}
+
+Table SALES.ORDERS [read: 19, write: 1] {
+  BILL_TO_ADDRESS_ID unknown [join: 1, insert: 1]
+  CREATED_AT unknown [insert: 1]
+  CURRENCY_CODE unknown [select: 3, join: 1, insert: 1]
+  CUSTOMER_ID unknown [select: 4, where: 2, join: 4, group_by: 1, insert: 1]
+  ORDER_DATE unknown [select: 9, where: 5, order_by: 1, insert: 1]
+  ORDER_ID unknown [select: 14, where: 1, join: 7, group_by: 1, insert: 1]
+  ORDER_TOTAL unknown [select: 5, where: 1, group_by: 1, aggregate: 2]
+  SALES_REP_ID unknown [select: 2, group_by: 1, insert: 1]
+  SHIP_TO_ADDRESS_ID unknown [join: 1, insert: 1]
+  STATUS unknown [select: 3, where: 6, insert: 1]
+}
+
+Table SALES."ORDERS@ARCHIVE" [read: 1] {
+  CUSTOMER_ID unknown [select: 1, where: 1]
+  ORDER_DATE unknown [select: 1]
+  ORDER_ID unknown [select: 1]
+  ORDER_TOTAL unknown [select: 1]
+}
+
+Table SALES.ORDER_LINES [read: 9, write: 1] {
+  DISCOUNT_PCT unknown [select: 2, aggregate: 1]
+  LINE_NO unknown [select: 6, join: 2, order_by: 1, insert: 1]
+  ORDER_ID unknown [select: 4, where: 2, join: 5, group_by: 1, insert: 1]
+  PRODUCT_ID unknown [select: 4, join: 5, insert: 1]
+  QUANTITY unknown [select: 6, where: 1, aggregate: 1, insert: 1]
+  UNIT_PRICE unknown [select: 3, aggregate: 1, insert: 1]
+}
+
+Table SALES.ORDER_PROMOTIONS [read: 2] {
+  ORDER_ID unknown [join: 1]
+  PROMO_ID unknown [join: 2]
+}
+
+Table SALES.PAYMENTS [read: 4] {
+  AMOUNT unknown [select: 1, aggregate: 1]
+  CURRENCY_CODE unknown [join: 1]
+  ExternalRef unknown [select: 1, where: 1]
+  METHOD unknown [where: 1]
+  ORDER_ID unknown [join: 3]
+  PAID_AT unknown [select: 1, aggregate: 1]
+  PAYMENT_ID unknown [select: 1]
+}
+
+Table SALES.PROMOTIONS [read: 2, write: 1] {
+  ENDS_ON unknown [where: 1]
+  PERCENT_OFF unknown [select: 1]
+  PROMO_CODE unknown [select: 1, where: 1]
+  PROMO_ID unknown [join: 2]
+}
+
+Table SALES.V_ORDER_SUMMARY [read: 1] {
+  CUSTOMER_NAME unknown [select: 1]
+  GROSS_AMOUNT unknown [select: 1]
+  LINE_COUNT unknown [select: 1, where: 1]
+  ORDER_ID unknown [select: 1]
+  STATUS unknown [where: 1]
+}

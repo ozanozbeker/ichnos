@@ -17,6 +17,21 @@ updates:
     commit-message:
       prefix: chore
 
+  # dbdiagram moves to newer `@dbml/core` releases, and the DBML tests follow it (ADR 0015).
+  - package-ecosystem: npm
+    directory: /tests/dbml
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    # `@dbml/core` and `@dbml/parse` release together, and Dependabot skips a pre-release when the pin is a release.
+    groups:
+      dbml:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
