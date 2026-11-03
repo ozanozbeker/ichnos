@@ -30,6 +30,6 @@ def test_a_name_that_dbml_cannot_write_bare_is_quoted(
         ichnos.infer({"q": 'SELECT p."Paid At", p."1st" FROM "sales"."pay ments" p'})
     )
     parsed = assert_dbml_valid(text)
-    [table] = parsed["tables"]
+    [table] = [t for t in parsed["tables"] if t["schema"] != "report"]
     assert (table["schema"], table["name"]) == ("sales", "pay ments")
     assert [c["name"] for c in table["columns"]] == ["1st", "Paid At"]

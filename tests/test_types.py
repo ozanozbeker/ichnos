@@ -203,7 +203,8 @@ def test_dbml_core_reads_back_every_quoted_name_and_observed_value(
     literal = value.replace("'", "''")
     sql = f'SELECT 1 FROM "o"."{name}" t WHERE t."{name}" = \'{literal}\''  # noqa: S608 # generated test text
     graph = ichnos.infer({"q": sql})
-    [table] = dbml_checker.check(ichnos.dbml(graph))["tables"]
+    tables = dbml_checker.check(ichnos.dbml(graph))["tables"]
+    [table] = [t for t in tables if t["schema"] != "report"]
     [column] = table["columns"]
     assert (table["name"], column["name"]) == (name, name)
     plain = "," not in value and value == value.strip(" ")

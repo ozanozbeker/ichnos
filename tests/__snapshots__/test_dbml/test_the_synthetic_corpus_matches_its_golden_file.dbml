@@ -7,6 +7,7 @@ Project ichnos {
   `null` claims a column can hold NULL. ichnos never claims NOT NULL.
   `>?` means the left side refers to a key on the right. `?<>?` means the direction is unknown.
   `?-?` joins two keys. Each key is a unique index, because ichnos never claims a primary key.
+  The schema `report` holds the reports, which are queries, not tables.
   '''
 }
 
@@ -358,3 +359,296 @@ Ref "join 4": SALES.ORDER_LINES.PRODUCT_ID >? INV.PRODUCTS.PRODUCT_ID
 Ref "join 1": SALES.ORDER_PROMOTIONS.ORDER_ID >? SALES.ORDERS.ORDER_ID
 Ref "join 2": SALES.ORDER_PROMOTIONS.PROMO_ID ?<>? SALES.PROMOTIONS.PROMO_ID
 Ref "join 2": SALES.PAYMENTS.ORDER_ID >? SALES.ORDERS.ORDER_ID
+
+Table report."001_active_customers" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  EMAIL unknown
+}
+
+Table report."002_orders_with_customers" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_DATE unknown
+  ORDER_TOTAL unknown
+  CUSTOMER_NAME unknown
+}
+
+Table report."003_orders_comma_join_synonyms" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_DATE unknown
+  CUSTOMER_NAME unknown
+  CUSTOMER_TYPE unknown
+}
+
+Table report."004_order_lines_with_products" [kind: 'report'] {
+  ORDER_ID unknown
+  LINE_NO unknown
+  SKU unknown
+  PRODUCT_NAME unknown
+  QUANTITY unknown
+  UNIT_PRICE unknown
+}
+
+Table report."005_customers_without_orders" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  CREATED_AT unknown
+}
+
+Table report."006_employees_with_managers" [kind: 'report'] {
+  EMPLOYEE_ID unknown
+  LAST_NAME unknown
+  MANAGER_LAST_NAME unknown
+}
+
+Table report."007_unshipped_order_lines" [kind: 'report'] {
+  ORDER_ID unknown
+  LINE_NO unknown
+  QUANTITY unknown
+  QTY_SHIPPED number
+}
+
+Table report."008_stock_by_warehouse" [kind: 'report'] {
+  WAREHOUSE_CODE unknown
+  WAREHOUSE_NAME unknown
+  PRODUCT_ID unknown
+  QTY_ON_HAND unknown
+  REORDER_POINT unknown
+}
+
+Table report."009_category_tree_connect_by" [kind: 'report'] {
+  DEPTH unknown
+  CATEGORY_ID unknown
+  CATEGORY_PATH text
+}
+
+Table report."010_category_tree_recursive_cte" [kind: 'report'] {
+  ROOT_ID unknown
+  CATEGORY_NAME unknown
+  DEPTH unknown
+  PRODUCT_COUNT number
+}
+
+Table report."011_monthly_revenue_by_currency" [kind: 'report'] {
+  MONTH_START datetime
+  CURRENCY_NAME unknown
+  REVENUE number
+}
+
+Table report."012_top_customers_rownum" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  LIFETIME_VALUE number
+}
+
+Table report."013_orders_with_payment" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_TOTAL unknown
+}
+
+Table report."014_products_never_ordered" [kind: 'report'] {
+  PRODUCT_ID unknown
+  SKU unknown
+  PRODUCT_NAME unknown
+}
+
+Table report."015_last_payment_per_order" [kind: 'report'] {
+  ORDER_ID unknown
+  STATUS unknown
+  LAST_PAID_AT unknown
+}
+
+Table report."016_unqualified_columns_in_join" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_DATE unknown
+  CUSTOMER_NAME unknown
+  CREDIT_LIMIT unknown
+}
+
+Table report."017_order_summary_view" [kind: 'report'] {
+  ORDER_ID unknown
+  CUSTOMER_NAME unknown
+  LINE_COUNT unknown
+  GROSS_AMOUNT unknown
+}
+
+Table report."018_employee_directory_view" [kind: 'report'] {
+  FULL_NAME unknown
+  WORK_EMAIL unknown
+  DEPT_NAME unknown
+  MANAGER_NAME unknown
+}
+
+Table report."019_daily_sales_mview" [kind: 'report'] {
+  SALES_DATE unknown
+  CURRENCY_CODE unknown
+  ORDER_COUNT unknown
+  REVENUE unknown
+}
+
+Table report."020_emp_synonym" [kind: 'report'] {
+  EMPLOYEE_ID unknown
+  FIRST_NAME unknown
+  LAST_NAME unknown
+  DEPARTMENT_NAME unknown
+}
+
+Table report."021_orders_with_archive" [kind: 'report'] {
+  ORDER_ID unknown
+  CUSTOMER_ID unknown
+  ORDER_DATE unknown
+  ORDER_TOTAL unknown
+  SOURCE text
+}
+
+Table report."027_orders_with_promotions" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_DATE unknown
+  PROMO_CODE unknown
+  PERCENT_OFF unknown
+}
+
+Table report."028_payments_quoted_identifiers" [kind: 'report'] {
+  PAYMENT_ID unknown
+  ExternalRef unknown
+  "Paid Amount" unknown
+  "Paid At" unknown
+}
+
+Table report."029_order_status_labels" [kind: 'report'] {
+  ORDER_ID unknown
+  STATUS_LABEL text
+  SIZE_BAND text
+  REP_ID number
+}
+
+Table report."030_latest_order_per_customer" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  ORDER_ID unknown
+  ORDER_DATE unknown
+}
+
+Table report."031_recent_shipments_fetch_first" [kind: 'report'] {
+  SHIPMENT_ID unknown
+  ORDER_ID unknown
+  CARRIER unknown
+  TRACKING_NO unknown
+  SHIP_DATE unknown
+}
+
+Table report."033_hint_and_binds" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_DATE unknown
+  STATUS unknown
+}
+
+Table report."034_ship_and_bill_addresses" [kind: 'report'] {
+  ORDER_ID unknown
+  SHIP_CITY unknown
+  SHIP_COUNTRY unknown
+  BILL_CITY unknown
+  BILL_COUNTRY unknown
+}
+
+Table report."035_departments_by_country" [kind: 'report'] {
+  COUNTRY_NAME unknown
+  DEPARTMENT_NAME unknown
+  MANAGER_LAST_NAME unknown
+}
+
+Table report."036_staff_purchases_by_email" [kind: 'report'] {
+  EMPLOYEE_ID unknown
+  LAST_NAME unknown
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+}
+
+Table report."037_account_managers" [kind: 'report'] {
+  CUSTOMER_NAME unknown
+  FIRST_NAME unknown
+  LAST_NAME unknown
+}
+
+Table report."038_daily_reports#1" [kind: 'report'] {
+  NEW_ORDERS number
+}
+
+Table report."038_daily_reports#2" [kind: 'report'] {
+  NEW_CUSTOMERS number
+}
+
+Table report."039_rep_sales_inline_view" [kind: 'report'] {
+  EMPLOYEE_ID unknown
+  LAST_NAME unknown
+  ORDER_COUNT unknown
+  REVENUE unknown
+}
+
+Table report."040_products_per_order" [kind: 'report'] {
+  ORDER_ID unknown
+  SKUS text
+}
+
+Table report."041_duplicate_customer_emails" [kind: 'report'] {
+  ROW_ADDRESS unknown
+  CUSTOMER_ID unknown
+  EMAIL unknown
+}
+
+Table report."042_join_using" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_DATE unknown
+  LINE_NO unknown
+  QUANTITY unknown
+}
+
+Table report."043_shipments_per_warehouse_country" [kind: 'report'] {
+  COUNTRY_NAME unknown
+  WAREHOUSE_CODE unknown
+  SHIPMENTS number
+}
+
+Table report."044_order_payment_balance" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_TOTAL unknown
+  PAID number
+  BALANCE unknown
+}
+
+Table report."054_segment_summary" [kind: 'report'] {
+  SEGMENT unknown
+  CUSTOMER_COUNT number
+  NET_AMOUNT number
+}
+
+Table report."055_key_customers" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  NET_AMOUNT_12M unknown
+}
+
+Table report."056_key_customers_dashboard" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  NET_AMOUNT_12M unknown
+}
+
+Table report."057_mart_daily_checks#1" [kind: 'report'] {
+  SALES_DATE unknown
+  CURRENCY_CODE unknown
+  LINE_COUNT number
+  NET_AMOUNT number
+}
+
+Table report."057_mart_daily_checks#2" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  EMAIL unknown
+}
+
+Table report."058_category_monthly_eur" [kind: 'report'] {
+  SALES_MONTH unknown
+  CATEGORY_NAME unknown
+  NET_AMOUNT unknown
+  ORDER_COUNT unknown
+}

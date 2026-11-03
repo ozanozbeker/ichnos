@@ -6,7 +6,17 @@ The graph module holds the records, and this module turns them into text that `@
 import re
 from typing import TYPE_CHECKING
 
-from ichnos._graph import Ambiguity, Column, Graph, Key, Relationship, Table, count
+from ichnos._graph import (
+    Ambiguity,
+    Column,
+    Graph,
+    IchnosError,
+    Key,
+    Relationship,
+    Report,
+    Table,
+    count,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,6 +38,8 @@ _ESCAPES = str.maketrans(
     {"\\": "\\\\", '"': '\\"', "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 )
 _TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+# Only a quoted lowercase Oracle owner can take this name, and `dbml` raises on one.
+_REPORTS = "report"
 # The output lists at most this many observed values, and only their number above it (ADR 0003).
 _OBSERVED = 20
 _BARE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -46,6 +58,11 @@ def dbml(graph: Graph) -> str:
     :
         The DBML text, which ends with one `\n`.
 
+    Raises
+    ------
+    IchnosError
+        When a table's owner is `report`, the schema that DBML writes reports in.
+
     Examples
     --------
     ```python
@@ -55,10 +72,25 @@ def dbml(graph: Graph) -> str:
     print(ichnos.dbml(graph))
     ```
     """
+    clash = next((t for t in graph.tables if t.owner == _REPORTS), None)
+    if clash is not None:
+        message = f'the owner "{_REPORTS}" of {clash.name} is the schema that DBML writes reports in'
+        raise IchnosError(message)
     blocks = [_project(graph), *(_table(t) for t in graph.tables)]
     if graph.relationships:
         blocks.append("\n".join(_ref(r) for r in graph.relationships))
+    blocks += [_report(r) for r in graph.reports]
     return "\n\n".join(blocks) + "\n"
+
+
+def _report(report: Report) -> str:
+    """Write a report as a table in the schema `report`, because a `Dep` endpoint must be a table (ADR 0009)."""
+    lines = [
+        f"  {_name(c.name)} {_name('|'.join(t for t in _TYPES if t in c.types) or 'unknown')}"
+        for c in report.output_columns
+    ] or ['  "*" unknown']
+    head = f"Table {_REPORTS}.{_name(report.name)} [kind: 'report']"
+    return f"{head} {{\n" + "\n".join(lines) + "\n}"
 
 
 def _ref(relationship: Relationship) -> str:
@@ -99,6 +131,7 @@ def _project(graph: Graph) -> str:
         "`null` claims a column can hold NULL. ichnos never claims NOT NULL.",
         "`>?` means the left side refers to a key on the right. `?<>?` means the direction is unknown.",
         "`?-?` joins two keys. Each key is a unique index, because ichnos never claims a primary key.",
+        "The schema `report` holds the reports, which are queries, not tables.",
     ]
     lines = "\n".join(f"  {line}" for line in note)
     return (

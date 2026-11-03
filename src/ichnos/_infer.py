@@ -102,6 +102,14 @@ type Side = tuple[TableKey, tuple[str, ...]]
 """One side of a relationship: a table and its columns, aligned with the other side's."""
 
 
+@dataclass(frozen=True, slots=True)
+class ReportEvidence:
+    """A query that reads tables and writes none, with each output column's name and value (ADR 0009)."""
+
+    index: int
+    outputs: tuple[tuple[str, Fact], ...]
+
+
 @dataclass(slots=True)
 class Evidence:
     """The evidence of every query, combined."""
@@ -110,6 +118,7 @@ class Evidence:
     ambiguous: list[AmbiguousColumn]
     # The queries behind each relationship, with its sides in name order (ADR 0002).
     relationships: dict[tuple[Side, Side], set[int]]
+    reports: list[ReportEvidence]
 
 
 def relationship(
@@ -150,7 +159,59 @@ def combine(traces: Sequence[Trace]) -> Evidence:
         for key in trace.keys:
             tables[key.table].keys[key.columns][key.shape].add(index)
     declarations.record(tables)
-    return Evidence(dict(tables), list(ambiguous), _relationships(traces, declarations))
+    return Evidence(
+        dict(tables),
+        list(ambiguous),
+        _relationships(traces, declarations),
+        _reports(traces, declarations),
+    )
+
+
+def _reports(
+    traces: Sequence[Trace], declarations: _Declarations
+) -> list[ReportEvidence]:
+    """Return each query that reads a table and writes none, which is a report (ADR 0009)."""
+    reports: list[ReportEvidence] = []
+    for index, trace in enumerate(traces):
+        if trace.statement != "select" or not trace.reads:
+            continue
+        outputs: list[tuple[str, Fact]] = []
+        for item, value in trace.outputs:
+            if isinstance(item, str):
+                outputs.append((item, value if isinstance(value, Fact) else Fact()))
+            else:
+                # A `*` that a declaration expands gives its columns, and one that stays unexpanded gives none.
+                outputs.extend(
+                    (name, Fact()) for name in declarations.columns(item) or ()
+                )
+        reports.append(
+            ReportEvidence(
+                index,
+                tuple(
+                    zip(
+                        _unique([n for n, _ in outputs]),
+                        (f for _, f in outputs),
+                        strict=True,
+                    )
+                ),
+            )
+        )
+    return reports
+
+
+def _unique(names: list[str]) -> list[str]:
+    """Give each repeated output column name a space and `(2)`, `(3)` and so on, skipping every name the report holds."""
+    held = set(names)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for name in names:
+        candidate, number = name, 2
+        while candidate in seen:
+            while (candidate := f"{name} ({number})") in held | seen:
+                number += 1
+        seen.add(candidate)
+        unique.append(candidate)
+    return unique
 
 
 def _relationships(
