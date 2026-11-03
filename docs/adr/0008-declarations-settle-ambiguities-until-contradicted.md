@@ -26,7 +26,7 @@ Oracle raises ORA-00998 for an expression with no alias in a creating query, so 
 A `*` or `t.*` over a declared table expands to that table's declared columns, in order, because Oracle expands a top-level `*` when it creates a view.
 So 052 declares the four columns that 049 declares for `MART.CUSTOMER_SEGMENTS`.
 A `*` over a table with no declaration stays unexpanded, and the creating query declares only the columns it names.
-The `*` still gives a table-to-table dependency ([ADR 0009](0009-lineage-from-clause-positions-with-openlineage-subtypes.md)).
+The `*` still gives a table-to-table dependency ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 
 `declared` is an evidence kind for a column, counted in distinct creating queries.
 ichnos marks a declared table's column list as complete, unless a `*` in its creating query stayed unexpanded.
@@ -66,7 +66,7 @@ An `INSERT`, each `INTO` of an `INSERT ALL`, and a `MERGE ... INSERT` with no co
 Oracle raises ORA-00947 or ORA-00913 when the counts differ, so the mapping applies only when they match.
 A mapped value counts as if a column list named its column, for `generated` key evidence ([ADR 0006](0006-keys-from-name-matches-and-four-query-shapes.md)), type evidence, observed values ([ADR 0003](0003-literals-give-types-and-observed-values-never-an-enum.md)) and nullable evidence.
 With no declaration, the values map to no column and give no column evidence.
-Each value still gives a column-to-table dependency ([ADR 0009](0009-lineage-from-clause-positions-with-openlineage-subtypes.md)).
+Each value still gives a column-to-table dependency ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 In the corpus, 046's nine values map to the nine columns that 045 declares.
 
 ## Contradicted declarations

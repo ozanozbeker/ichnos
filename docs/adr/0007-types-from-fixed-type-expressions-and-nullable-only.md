@@ -48,7 +48,7 @@ Without a schema, sqlglot 30.26.0's `annotate_types` leaves `ADD_MONTHS`, `SUM`,
 A type never passes from one column to another.
 `c.customer_id = o.customer_id`, one column position across set-operation branches, and `INSERT ... SELECT` of a column give neither side type evidence, even when one side has a type from another query.
 So `CUSTOMER_ID` has no type anywhere in the synthetic corpus, because its queries compare it only with bind variables and other columns.
-A type does not pass along a dependency either ([ADR 0009](0009-lineage-from-clause-positions-with-openlineage-subtypes.md)).
+A type does not pass along a dependency either ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 
 A column's name gives no type.
 

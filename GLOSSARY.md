@@ -29,10 +29,6 @@ It is never a table, because no other query can read it.
 Two files that hold the same text are two reports.
 _Avoid_: asset, dashboard, output
 
-**Output column**: A column that a report returns, identified by its report and its position.
-Two output columns of one report can share a name.
-_Avoid_: report column, result column
-
 **Unparsed query**: A query that ichnos cannot read whole, or one that is not a `SELECT`, DML or a creating query.
 ichnos skips it and lists it.
 _Avoid_: invalid query, failed query
