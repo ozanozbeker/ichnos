@@ -30,8 +30,7 @@ It splits each file into queries at `;` tokens and at lines that hold only `/`, 
 It reads one query at a time.
 It resolves aliases, CTEs and derived tables within the query, and records an unqualified column in a scope with several sources as an ambiguity with its candidates.
 Evidence counts and declarations from creating queries combine queries, so they live above the module.
-The schema that `lineage()` needs comes from the query and from declarations ([ADR 0008](0008-declarations-settle-ambiguities-until-contradicted.md)), never from references in other queries, as ADR-0001 requires.
-[Lineage inference rules](https://github.com/ozanozbeker/ichnos/issues/35) chooses between `lineage()` and ichnos's own tracing over `optimizer.scope`.
+The module also returns each query's lineage trace, which ichnos builds over `optimizer.scope` and never with `sqlglot.lineage` ([ADR 0009](0009-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 
 A query is read whole or not at all.
 A parse that raises, a `Command` result, or a later step that raises makes the query an unparsed query, and the run continues.

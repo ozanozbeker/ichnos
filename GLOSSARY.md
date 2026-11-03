@@ -29,6 +29,10 @@ It is never a table, because no other query can read it.
 Two files that hold the same text are two reports.
 _Avoid_: asset, dashboard, output
 
+**Output column**: A column that a report returns, identified by its report and its position.
+Two output columns of one report can share a name.
+_Avoid_: report column, result column
+
 **Unparsed query**: A query that ichnos cannot read whole, or one that is not a `SELECT`, DML or a creating query.
 ichnos skips it and lists it.
 _Avoid_: invalid query, failed query
@@ -135,13 +139,26 @@ _Avoid_: stale declaration, invalid declaration
 **Lineage**: The dependencies ichnos infers from a corpus.
 _Avoid_: data flow, provenance
 
-**Dependency**: An inferred claim that a table or column is derived from another table or column.
+**Dependency**: An inferred claim that a table or column is derived from another table or column, or that a column selects which rows or values it holds.
 A report and its output columns can be the downstream end, never the upstream end.
 A dependency has no direction, because direction is a claim about a relationship.
 _Avoid_: edge, dep, flow
 
-**Upstream**: The end of a dependency that the other end is derived from: a table or a column.
+**Direct dependency**: A dependency whose downstream value is computed from its upstream end, as from a bare column, an expression or an aggregate.
+_Avoid_: value dependency
+
+**Indirect dependency**: A dependency whose upstream column selects which rows or values the downstream end holds, as a column in `WHERE`, `JOIN`, `GROUP BY` or a `CASE` condition does.
+_Avoid_: control dependency, filter dependency
+
+**Transformation subtype**: OpenLineage's name for how a dependency's downstream end uses its upstream end, such as `IDENTITY`, `AGGREGATION` or `FILTER`.
+Each subtype is an evidence kind of the dependency.
+_Avoid_: type, kind, transformation type
+
+**Self-dependency**: A dependency whose two ends belong to one table.
+_Avoid_: loop
+
+**Upstream**: The end of a dependency that the other end is derived from or selected by: a table or a column.
 _Avoid_: source, parent
 
-**Downstream**: The end of a dependency that is derived: a table, a report or a column.
+**Downstream**: The end of a dependency that is derived or selected: a table, a report or a column.
 _Avoid_: target, child, sink

@@ -48,7 +48,7 @@ Without a schema, sqlglot 30.26.0's `annotate_types` leaves `ADD_MONTHS`, `SUM`,
 A type never passes from one column to another.
 `c.customer_id = o.customer_id`, one column position across set-operation branches, and `INSERT ... SELECT` of a column give neither side type evidence, even when one side has a type from another query.
 So `CUSTOMER_ID` has no type anywhere in the synthetic corpus, because its queries compare it only with bind variables and other columns.
-[Lineage inference rules](https://github.com/ozanozbeker/ichnos/issues/35) decides whether a type passes along a dependency.
+A type does not pass along a dependency either ([ADR 0009](0009-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 
 A column's name gives no type.
 
@@ -59,7 +59,7 @@ A declared column takes that type outright, because Oracle gives a table or view
 Type evidence for another type from other queries raises no ambiguity for it.
 `COUNT(*) AS order_count` gives number, and 021's `'CURRENT' AS source` gives text.
 A projected literal gives no observed value, as ADR 0003 says.
-A bare column, or an expression whose type follows an upstream column such as `MAX(p.paid_at)`, goes to lineage.
+A bare column, or an expression whose type follows an upstream column such as `MAX(p.paid_at)`, gets no type, because a type does not pass along a dependency.
 
 ## Two types
 
