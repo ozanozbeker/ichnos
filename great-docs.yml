@@ -1,0 +1,24 @@
+# Each build generates `great-docs/_quarto.yml` from this file, so edit this file, not that one.
+
+parser: numpy
+dynamic: true
+
+display_name: ichnos
+site_url: https://ozanozbeker.com/ichnos/
+
+authors:
+  - name: Ozan Ozbeker
+    role: Maintainer
+    email: github@ozanozbeker.com
+
+# Without `base_url`, great-docs sets the canonical URL and `og:url` to the github.io address, which redirects to `site_url`.
+seo:
+  canonical:
+    base_url: https://ozanozbeker.com/ichnos/
+  # great-docs 0.17.0 adds the site name a second time (posit-dev/great-docs#327). Delete this once a release includes #335.
+  title_template: "{page_title}"
+
+user_guide:
+  - section: Guide
+    contents:
+      - upgrading.qmd
