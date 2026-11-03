@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
   "cyclopts>=5.0.0,<6",
-  "sqlglot>=30.26.0,<30.28",
+  "sqlglot>=30.23.0,<30.28",
 ]
 
 [project.urls]

@@ -682,7 +682,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "cyclopts", specifier = ">=5.0.0,<6" },
-    { name = "sqlglot", specifier = ">=30.26.0,<30.28" },
+    { name = "sqlglot", specifier = ">=30.23.0,<30.28" },
 ]
 
 [package.metadata.requires-dev]
