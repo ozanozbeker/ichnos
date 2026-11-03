@@ -3,20 +3,22 @@ Project ichnos {
   Note: '''
   Inferred by ichnos from 60 queries, with no database connection.
   Counts are distinct queries. A column with no type evidence has the type `unknown`.
+  A column with evidence for two types writes both, such as `text|number`, an ambiguity.
+  `null` claims a column can hold NULL. ichnos never claims NOT NULL.
   '''
 }
 
 Table CUSTOMERS [read: 1, ambiguity: '003_orders_comma_join_synonyms: CUSTOMERS may be SALES.CUSTOMERS (11)'] {
   CUSTOMER_ID unknown [join: 1]
   CUSTOMER_NAME unknown [select: 1]
-  CUSTOMER_TYPE unknown [select: 1, where: 1]
+  CUSTOMER_TYPE text [select: 1, where: 1, text: 1, observed: 'TRADE']
 }
 
 Table EMP [read: 1] {
   DEPARTMENT_ID unknown [join: 1]
   EMPLOYEE_ID unknown [select: 1]
   FIRST_NAME unknown [select: 1]
-  HIRE_DATE unknown [where: 1]
+  HIRE_DATE datetime [where: 1, datetime: 1]
   LAST_NAME unknown [select: 1]
 }
 
@@ -40,17 +42,17 @@ Table PRODUCTS [read: 1, ambiguity: '040_products_per_order: PRODUCTS may be INV
 Table HR.DEPARTMENTS [read: 3] {
   DEPARTMENT_ID unknown [join: 2]
   DEPARTMENT_NAME unknown [select: 2, order_by: 1]
-  LOCATION_COUNTRY unknown [where: 1, join: 1]
+  LOCATION_COUNTRY text [where: 1, join: 1, text: 1, observed: 'DE']
   MANAGER_ID unknown [join: 1]
 }
 
 Table HR.EMPLOYEES [read: 5] {
-  EMAIL unknown [join: 1]
+  EMAIL text [join: 1, text: 1]
   EMPLOYEE_ID unknown [select: 3, join: 4]
   FIRST_NAME unknown [select: 1]
   LAST_NAME unknown [select: 5]
   MANAGER_ID unknown [join: 1]
-  STATUS unknown [where: 1]
+  STATUS text [where: 1, text: 1, observed: 'A']
 }
 
 Table HR.EMP_DIRECTORY [read: 1] {
@@ -63,18 +65,18 @@ Table HR.EMP_DIRECTORY [read: 1] {
 
 Table INV.PRODUCTS [read: 7] {
   CATEGORY_ID unknown [select: 2, join: 1]
-  CREATED_AT unknown [where: 1]
+  CREATED_AT datetime [where: 1, datetime: 1]
   LIST_PRICE unknown [select: 1]
   PRODUCT_ID unknown [select: 2, where: 1, join: 4, aggregate: 1]
   PRODUCT_NAME unknown [select: 2]
   SKU unknown [select: 2]
-  STATUS unknown [where: 2]
+  STATUS text [where: 2, text: 2, observed: 'ACTIVE']
 }
 
 Table INV.PRODUCT_CATEGORIES [read: 3] {
   CATEGORY_ID unknown [select: 2, join: 2]
   CATEGORY_NAME unknown [select: 3, group_by: 1, order_by: 1]
-  PARENT_CATEGORY_ID unknown [where: 2, join: 2]
+  PARENT_CATEGORY_ID unknown [null, where: 2, join: 2, nullable: 2]
 }
 
 Table INV.SHIPMENTS [read: 3] {
@@ -82,7 +84,7 @@ Table INV.SHIPMENTS [read: 3] {
   ORDER_ID unknown [select: 1]
   SHIPMENT_ID unknown [select: 1, where: 1, aggregate: 1]
   SHIP_DATE unknown [select: 1, order_by: 1]
-  STATUS unknown [where: 1]
+  STATUS text [where: 1, text: 1, observed: 'SHIPPED']
   TRACKING_NO unknown [select: 1]
   WAREHOUSE_ID unknown [select: 1, join: 1]
 }
@@ -90,15 +92,15 @@ Table INV.SHIPMENTS [read: 3] {
 Table INV.SHIPMENT_LINES [read: 2] {
   LINE_NO unknown [join: 2]
   ORDER_ID unknown [join: 2]
-  QTY_SHIPPED unknown [select: 1, where: 1, aggregate: 1]
+  QTY_SHIPPED number [select: 1, where: 1, aggregate: 1, number: 2]
   SHIPMENT_ID unknown [where: 1]
 }
 
 Table INV.STOCK_LEVELS [read: 3, write: 2] {
   PRODUCT_ID unknown [select: 1, join: 2, insert: 1]
-  QTY_ON_HAND unknown [select: 2, where: 1, insert: 1, set: 1]
+  QTY_ON_HAND number [select: 2, where: 1, insert: 1, set: 1, number: 1, observed: '0']
   REORDER_POINT unknown [select: 1, where: 1]
-  UPDATED_AT unknown [insert: 1, set: 1]
+  UPDATED_AT datetime [insert: 1, set: 1, datetime: 2]
   WAREHOUSE_ID unknown [where: 1, join: 2, insert: 1]
 }
 
@@ -111,18 +113,18 @@ Table INV.WAREHOUSES [read: 3] {
 
 Table MART.CUSTOMER_DAILY_SALES [kind: 'base table', complete: true, declared: 1, read: 4, write: 1] {
   CUSTOMER_ID unknown [declared: 1, select: 2, join: 1, group_by: 1, insert: 1]
-  SALES_DATE unknown [declared: 1, select: 1, where: 3, join: 1, group_by: 1, order_by: 1, aggregate: 1, insert: 1]
+  SALES_DATE datetime [declared: 1, select: 1, where: 3, join: 1, group_by: 1, order_by: 1, aggregate: 1, insert: 1, datetime: 3]
   CURRENCY_CODE unknown [declared: 1, select: 1, join: 1, group_by: 1, insert: 1]
-  LINE_COUNT unknown [declared: 1, aggregate: 1, insert: 1, set: 1]
-  UNITS unknown [declared: 1, insert: 1, set: 1]
-  NET_AMOUNT unknown [declared: 1, aggregate: 2, insert: 1, set: 1]
+  LINE_COUNT number [declared: 1, aggregate: 1, insert: 1, set: 1, number: 2]
+  UNITS number [declared: 1, insert: 1, set: 1, number: 1]
+  NET_AMOUNT number [declared: 1, aggregate: 2, insert: 1, set: 1, number: 3]
 }
 
 Table MART.CUSTOMER_SEGMENTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
   CUSTOMER_ID unknown [declared: 1]
   CUSTOMER_NAME unknown [declared: 1]
-  NET_AMOUNT_12M unknown [declared: 1, select: 1, aggregate: 1]
-  SEGMENT unknown [declared: 1, select: 2, where: 2, group_by: 1, set: 1]
+  NET_AMOUNT_12M number [declared: 1, select: 1, aggregate: 1, number: 2]
+  SEGMENT text [declared: 1, select: 2, where: 2, group_by: 1, set: 1, text: 3, observed: 'KEY, STRATEGIC']
 }
 
 Table MART.LAPSED_CUSTOMERS [kind: 'base table', complete: true, declared: 1, read: 1] {
@@ -130,23 +132,23 @@ Table MART.LAPSED_CUSTOMERS [kind: 'base table', complete: true, declared: 1, re
 }
 
 Table MART.MV_CATEGORY_MONTHLY [kind: 'materialized view', complete: true, declared: 1, read: 1] {
-  SALES_MONTH unknown [declared: 1, select: 1, order_by: 1]
+  SALES_MONTH datetime [declared: 1, select: 1, order_by: 1, datetime: 1]
   CATEGORY_NAME unknown [declared: 1, select: 1, order_by: 1]
-  CURRENCY_CODE unknown [declared: 1, where: 1]
-  NET_AMOUNT unknown [declared: 1, select: 1]
-  ORDER_COUNT unknown [declared: 1, select: 1]
+  CURRENCY_CODE text [declared: 1, where: 1, text: 1, observed: 'EUR']
+  NET_AMOUNT number [declared: 1, select: 1, number: 1]
+  ORDER_COUNT number [declared: 1, select: 1, number: 1]
 }
 
 Table MART.ORDER_LINE_FACTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
   ORDER_ID unknown [declared: 1, aggregate: 1, insert: 1]
   LINE_NO unknown [declared: 1, insert: 1]
   CUSTOMER_ID unknown [declared: 1, select: 2, group_by: 2, insert: 1]
-  SALES_DATE unknown [declared: 1, select: 3, where: 1, group_by: 3, insert: 1]
+  SALES_DATE datetime [declared: 1, select: 3, where: 1, group_by: 3, insert: 1, datetime: 2]
   CURRENCY_CODE unknown [declared: 1, select: 3, group_by: 3, insert: 1]
   PRODUCT_ID unknown [declared: 1, insert: 1]
   CATEGORY_ID unknown [declared: 1, join: 1, insert: 1]
-  UNITS unknown [declared: 1, aggregate: 2, insert: 1]
-  NET_AMOUNT unknown [declared: 1, aggregate: 3, insert: 1]
+  UNITS number [declared: 1, aggregate: 2, insert: 1, number: 2]
+  NET_AMOUNT number [declared: 1, aggregate: 3, insert: 1, number: 5]
 }
 
 Table MART.V_KEY_CUSTOMERS [kind: 'view', complete: true, declared: 1, read: 1] {
@@ -168,11 +170,11 @@ Table REF.CURRENCIES [read: 1] {
 
 Table SALES.CUSTOMERS [read: 11, ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
   ACCOUNT_MANAGER_ID unknown [join: 1]
-  CREATED_AT unknown [select: 1, where: 1]
+  CREATED_AT datetime [select: 1, where: 1, datetime: 1]
   CUSTOMER_ID unknown [select: 6, join: 6, group_by: 1]
   CUSTOMER_NAME unknown [select: 8, group_by: 1, order_by: 1]
-  EMAIL unknown [select: 3, where: 1, join: 1, group_by: 1]
-  STATUS unknown [where: 2]
+  EMAIL text [select: 3, where: 1, join: 1, group_by: 1, text: 1]
+  STATUS text [where: 2, text: 2, observed: 'ACTIVE']
 }
 
 Table SALES.CUSTOMER_ADDRESSES [read: 1] {
@@ -190,15 +192,15 @@ Table SALES.MV_DAILY_SALES [read: 1] {
 
 Table SALES.ORDERS [read: 19, write: 1, ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
   BILL_TO_ADDRESS_ID unknown [join: 1, insert: 1]
-  CREATED_AT unknown [insert: 1]
+  CREATED_AT datetime [insert: 1, datetime: 1]
   CURRENCY_CODE unknown [select: 3, join: 1, insert: 1]
   CUSTOMER_ID unknown [select: 4, where: 2, join: 4, group_by: 1, insert: 1]
-  ORDER_DATE unknown [select: 9, where: 5, order_by: 1, insert: 1]
-  ORDER_ID unknown [select: 14, where: 1, join: 7, group_by: 1, insert: 1]
-  ORDER_TOTAL unknown [select: 5, where: 1, group_by: 1, aggregate: 2]
-  SALES_REP_ID unknown [select: 2, group_by: 1, insert: 1]
+  ORDER_DATE datetime [select: 9, where: 5, order_by: 1, insert: 1, datetime: 5]
+  ORDER_ID number [select: 14, where: 1, join: 7, group_by: 1, insert: 1, number: 1]
+  ORDER_TOTAL number [select: 5, where: 1, group_by: 1, aggregate: 2, number: 3]
+  SALES_REP_ID number [null, select: 2, group_by: 1, insert: 1, number: 1, nullable: 1]
   SHIP_TO_ADDRESS_ID unknown [join: 1, insert: 1]
-  STATUS unknown [select: 3, where: 6, insert: 1]
+  STATUS text [select: 3, where: 6, insert: 1, text: 8, observed: 'CANCELLED, NEW, PAID, SHIPPED']
 }
 
 Table SALES."ORDERS@ARCHIVE" [read: 1] {
@@ -209,12 +211,12 @@ Table SALES."ORDERS@ARCHIVE" [read: 1] {
 }
 
 Table SALES.ORDER_LINES [read: 9, write: 1] {
-  DISCOUNT_PCT unknown [select: 2, aggregate: 1]
+  DISCOUNT_PCT number [null, select: 2, aggregate: 1, number: 3, nullable: 3]
   LINE_NO unknown [select: 6, join: 2, order_by: 1, insert: 1]
   ORDER_ID unknown [select: 4, where: 2, join: 5, group_by: 1, insert: 1]
   PRODUCT_ID unknown [select: 4, join: 5, insert: 1]
-  QUANTITY unknown [select: 6, where: 1, aggregate: 1, insert: 1]
-  UNIT_PRICE unknown [select: 3, aggregate: 1, insert: 1]
+  QUANTITY number [select: 6, where: 1, aggregate: 1, insert: 1, number: 4]
+  UNIT_PRICE number [select: 3, aggregate: 1, insert: 1, number: 3]
 }
 
 Table SALES.ORDER_PROMOTIONS [read: 2] {
@@ -223,26 +225,26 @@ Table SALES.ORDER_PROMOTIONS [read: 2] {
 }
 
 Table SALES.PAYMENTS [read: 4] {
-  AMOUNT unknown [select: 1, aggregate: 1]
+  AMOUNT number [select: 1, aggregate: 1, number: 1]
   CURRENCY_CODE unknown [join: 1]
-  ExternalRef unknown [select: 1, where: 1]
-  METHOD unknown [where: 1]
+  ExternalRef unknown [null, select: 1, where: 1, nullable: 1]
+  METHOD text [where: 1, text: 1, observed: 'CARD']
   ORDER_ID unknown [join: 3]
   PAID_AT unknown [select: 1, aggregate: 1]
   PAYMENT_ID unknown [select: 1]
 }
 
 Table SALES.PROMOTIONS [read: 2, write: 1] {
-  ENDS_ON unknown [where: 1]
+  ENDS_ON datetime [where: 1, datetime: 1]
   PERCENT_OFF unknown [select: 1]
-  PROMO_CODE unknown [select: 1, where: 1]
+  PROMO_CODE text [select: 1, where: 1, text: 1]
   PROMO_ID unknown [join: 2]
 }
 
 Table SALES.V_ORDER_SUMMARY [read: 1] {
   CUSTOMER_NAME unknown [select: 1]
   GROSS_AMOUNT unknown [select: 1]
-  LINE_COUNT unknown [select: 1, where: 1]
+  LINE_COUNT number [select: 1, where: 1, number: 1]
   ORDER_ID unknown [select: 1]
-  STATUS unknown [where: 1]
+  STATUS text [where: 1, text: 1, observed: 'NEW']
 }

@@ -8,6 +8,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
+from ichnos._read import Fact
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -19,6 +21,8 @@ if TYPE_CHECKING:
         TableKey,
         TableKind,
         Trace,
+        Type,
+        Value,
     )
 
 type ContradictionReason = Literal["undeclared column", "declaration", "value count"]
@@ -33,6 +37,20 @@ class ColumnEvidence:
         default_factory=lambda: defaultdict(set)
     )
     declared: set[int] = field(default_factory=set)
+    types: defaultdict[Type, set[int]] = field(default_factory=lambda: defaultdict(set))
+    observed: defaultdict[str, set[int]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+    nullable: set[int] = field(default_factory=set)
+
+    def add(self, fact: Fact, index: int) -> None:
+        """Add what one reference or one assigned value shows about the column."""
+        if fact.type is not None:
+            self.types[fact.type].add(index)
+        for value in fact.observed:
+            self.observed[value].add(index)
+        if fact.nullable:
+            self.nullable.add(index)
 
 
 @dataclass(slots=True)
@@ -41,6 +59,7 @@ class DeclarationEvidence:
 
     kind: TableKind
     columns: tuple[str, ...]
+    types: dict[str, Type]
     indices: set[int]
 
 
@@ -91,12 +110,15 @@ def combine(traces: Sequence[Trace]) -> Evidence:
             if len(candidates) == 1:
                 column = tables[candidates[0]].columns[ref.name]
                 column.references[ref.position].add(index)
+                column.add(ref.fact, index)
             else:
                 # The reference gives evidence to no candidate (ADR 0001).
                 ambiguous[AmbiguousColumn(index, ref.name, candidates)] = None
         for write in trace.writes:
-            for name in declarations.mapped(write.table, write.values):
-                tables[write.table].columns[name].references["insert"].add(index)
+            for name, fact in declarations.mapped(write.table, write.values):
+                column = tables[write.table].columns[name]
+                column.references["insert"].add(index)
+                column.add(fact, index)
     declarations.record(tables)
     return Evidence(dict(tables), list(ambiguous))
 
@@ -174,15 +196,31 @@ class _Declarations:
         # A reference whose every candidate lacks the column contradicts them all, so some layer keeps one.
         return first  # pragma: no cover
 
+    def values(self, values: tuple[Value, ...] | None) -> tuple[Fact, ...] | None:
+        """Expand each `*` among assigned values, or return None when one stays unexpanded."""
+        if values is None:
+            return None
+        facts: list[Fact] = []
+        for value in values:
+            if isinstance(value, Fact):
+                facts.append(value)
+                continue
+            columns = self.columns(value)
+            if columns is None:
+                return None
+            # A value copied from a column shows nothing about the column it fills (ADR 0007).
+            facts.extend(Fact() for _ in columns)
+        return tuple(facts)
+
     def mapped(
-        self, table: TableKey, values: tuple[Item, ...] | None
-    ) -> tuple[str, ...]:
-        """Return the columns that an `INSERT` with no column list writes, by position."""
+        self, table: TableKey, values: tuple[Value, ...] | None
+    ) -> tuple[tuple[str, Fact], ...]:
+        """Return each column that an `INSERT` with no column list writes, with its value, by position."""
         columns = self.columns(table)
-        expanded = None if values is None else self.expand(values)
-        if columns is None or expanded is None or len(expanded) != len(columns):
+        facts = self.values(values)
+        if columns is None or facts is None or len(facts) != len(columns):
             return ()
-        return columns
+        return tuple(zip(columns, facts, strict=True))
 
     def record(self, tables: defaultdict[TableKey, TableEvidence]) -> None:
         """Add each declaration, its `declared` evidence and its contradictions to the tables."""
@@ -192,18 +230,27 @@ class _Declarations:
                 names = self.expand(creation.columns) or tuple(
                     c for c in creation.columns if isinstance(c, str)
                 )
+                types = dict(zip(creation.columns, creation.types, strict=True))
+                declared_types = {
+                    n: t for n in names if (t := types.get(n)) is not None
+                }
                 for name in names:
                     evidence.columns[name].declared.add(index)
+                for name, declared_type in declared_types.items():
+                    evidence.columns[name].types[declared_type].add(index)
                 found = next(
                     (
                         d
                         for d in evidence.declarations
-                        if (d.kind, d.columns) == (creation.kind, names)
+                        if (d.kind, d.columns, d.types)
+                        == (creation.kind, names, declared_types)
                     ),
                     None,
                 )
                 if found is None:
-                    declaration = DeclarationEvidence(creation.kind, names, {index})
+                    declaration = DeclarationEvidence(
+                        creation.kind, names, declared_types, {index}
+                    )
                     evidence.declarations.append(declaration)
                 else:
                     found.indices.add(index)
@@ -228,7 +275,7 @@ class _Declarations:
                         found[table].append((index, "undeclared column", ref.name))
             for write in trace.writes:
                 columns = self.columns(write.table)
-                values = None if write.values is None else self.expand(write.values)
+                values = self.values(write.values)
                 if (
                     columns is not None
                     and values is not None

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from ichnos._infer import ContradictionReason
-    from ichnos._read import Position, TableKind
+    from ichnos._read import Position, TableKind, Type
 
 
 class IchnosError(Exception):
@@ -102,7 +102,7 @@ class UnparsedQuery:
     error: str = field(compare=False)
 
 
-type AmbiguityKind = Literal["column", "owner", "declaration"]
+type AmbiguityKind = Literal["column", "owner", "declaration", "type"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,15 +114,16 @@ class Ambiguity:
     kind
         What the readings differ on. `"column"` is an unqualified column that several tables can hold,
         `"owner"` is a table with no owner that shares its name with tables that have one,
-        and `"declaration"` is a table that creating queries declare in more than one way.
+        `"declaration"` is a table that creating queries declare in more than one way,
+        and `"type"` is a column with evidence for two types.
     query
-        The query that holds the ambiguity, or `None` for a `"declaration"` ambiguity, which spans queries.
+        The query that holds the ambiguity, or `None` for a `"declaration"` or `"type"` ambiguity, which spans queries.
     subject
         The name that the readings differ on, such as the column `ORDER_ID` or the table `CUSTOMERS`.
     candidates
         Each candidate's name, such as `SALES.ORDERS.ORDER_ID`, with the queries behind it.
         Those queries give the candidate its own evidence count, and the ambiguity's query is never among them.
-        A `"declaration"` candidate names a kind and a column list, such as `view (ID, NAME)`.
+        A `"declaration"` candidate names a kind and a column list, such as `view (ID, NAME)`, and a `"type"` candidate names a type.
 
     Examples
     --------
@@ -152,6 +153,8 @@ class Declaration:
         The kind that the creating queries state.
     columns
         The declared column names, in declared order, with each `*` over a declared table expanded.
+    types
+        The type of each declared column whose expression has a fixed type (ADR 0007).
     queries
         The creating queries that state this declaration. Two that match give one declaration.
 
@@ -167,6 +170,7 @@ class Declaration:
 
     kind: TableKind
     columns: tuple[str, ...]
+    types: Mapping[str, Type] = field(compare=False)
     queries: tuple[Query, ...] = field(compare=False)
 
 
@@ -220,6 +224,13 @@ class Column:
         A position's evidence count is the number of distinct texts among its queries.
     declared
         The creating queries that declare the column.
+    types
+        The queries behind each type that the column shows (ADR 0007).
+    nullable
+        The queries that show the column can hold `NULL`. ichnos never claims `NOT NULL`.
+    observed
+        The queries behind each observed value, as its SQL literal text, such as `'PAID'` or `10000`.
+        A corpus never shows a column's full set of values (ADR 0003).
     undeclared
         Whether the table has a declaration that lacks the column.
     ambiguities
@@ -241,6 +252,9 @@ class Column:
     name: str
     references: Mapping[Position, tuple[Query, ...]] = field(compare=False, repr=False)
     declared: tuple[Query, ...] = field(compare=False, repr=False)
+    types: Mapping[Type, tuple[Query, ...]] = field(compare=False, repr=False)
+    nullable: tuple[Query, ...] = field(compare=False, repr=False)
+    observed: Mapping[str, tuple[Query, ...]] = field(compare=False, repr=False)
     undeclared: bool = field(compare=False, repr=False)
     ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
@@ -395,6 +409,9 @@ def infer(files: Mapping[str, str]) -> Graph:
     return _Builder(read, _infer.combine(traces)).graph(unparsed)
 
 
+_TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+
+
 def _name(owner: str | None, *names: str) -> str:
     return ".".join(n for n in (owner, *names) if n is not None)
 
@@ -415,6 +432,7 @@ class _Builder:
             *self._column_ambiguities(),
             *self._owner_ambiguities(),
             *self._declaration_ambiguities(),
+            *self._type_ambiguities(),
         ]
         # An ambiguity that spans queries sorts after every query's own.
         order = {query: index for index, query in enumerate(self.queries)}
@@ -488,6 +506,25 @@ class _Builder:
                 self.ambiguities[key].append(ambiguity)
         return ambiguities
 
+    def _type_ambiguities(self) -> list[Ambiguity]:
+        ambiguities: list[Ambiguity] = []
+        for key, evidence in self.evidence.tables.items():
+            for name, column in evidence.columns.items():
+                declared = {
+                    d.types[name] for d in evidence.declarations if name in d.types
+                }
+                # A declared column takes its declared type outright (ADR 0007).
+                if len(column.types) > 1 and len(declared) != 1:
+                    candidates: dict[str, tuple[Query, ...]] = {
+                        t: self.records(column.types[t])
+                        for t in _TYPES
+                        if t in column.types
+                    }
+                    ambiguity = Ambiguity("type", None, _name(*key, name), candidates)
+                    ambiguities.append(ambiguity)
+                    self.ambiguities[(key, name)].append(ambiguity)
+        return ambiguities
+
     def _table(self, key: _read.TableKey) -> Table:
         evidence = self.evidence.tables[key]
         kinds = {d.kind for d in evidence.declarations}
@@ -500,7 +537,7 @@ class _Builder:
             self.records(evidence.write),
             self.records(set().union(*(d.indices for d in evidence.declarations))),
             tuple(
-                Declaration(d.kind, d.columns, self.records(d.indices))
+                Declaration(d.kind, d.columns, d.types, self.records(d.indices))
                 for d in evidence.declarations
             ),
             kinds.pop() if len(kinds) == 1 else None,
@@ -529,6 +566,16 @@ class _Builder:
                     for position, found in evidence.columns[name].references.items()
                 },
                 self.records(evidence.columns[name].declared),
+                {
+                    t: self.records(evidence.columns[name].types[t])
+                    for t in _TYPES
+                    if t in evidence.columns[name].types
+                },
+                self.records(evidence.columns[name].nullable),
+                {
+                    value: self.records(found)
+                    for value, found in sorted(evidence.columns[name].observed.items())
+                },
                 bool(evidence.declarations) and name not in declared,
                 tuple(self.ambiguities[(key, name)]),
             )

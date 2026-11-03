@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Literal
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer.annotate_types import annotate_types
+from sqlglot.optimizer.qualify import qualify
+from sqlglot.schema import MappingSchema
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -29,11 +32,19 @@ _LINK = re.compile(r"CREATE DATABASE LINK (\w+)", re.IGNORECASE)
 
 
 @dataclass
+class KeyColumn:
+    # The type that ichnos would claim, or None when the answer key cannot say.
+    type: ichnos.Type | None
+    # None for a view's column, whose constraint the answer key does not state.
+    not_null: bool | None
+
+
+@dataclass
 class KeyTable:
     owner: str
     name: str
     kind: Literal["base table", "view", "materialized view"]
-    columns: list[str] = field(default_factory=list)
+    columns: dict[str, KeyColumn] = field(default_factory=dict)
 
 
 @dataclass
@@ -61,41 +72,74 @@ def _name(identifier: exp.Expression) -> str:
     )
 
 
+def _type(data_type: exp.DataType | None) -> ichnos.Type | None:
+    """Map an Oracle type to ichnos's: `CHAR` and `VARCHAR2` to text, `NUMBER` to number, `DATE` and `TIMESTAMP` to datetime."""
+    if data_type is None:
+        return None
+    if data_type.is_type(*exp.DataType.TEXT_TYPES):
+        return "text"
+    if data_type.is_type(*exp.DataType.NUMERIC_TYPES):
+        return "number"
+    if data_type.is_type(*exp.DataType.TEMPORAL_TYPES):
+        return "datetime"
+    return None
+
+
 def load() -> AnswerKey:
     text = (ANSWER_KEY / "schema.sql").read_text(encoding="utf-8")
+    statements = [
+        s
+        for s in sqlglot.parse(text, read="oracle")
+        if isinstance(s, exp.Create) and s.kind in {"TABLE", "VIEW"}
+    ]
     tables: dict[Name, KeyTable] = {}
-    for statement in sqlglot.parse(text, read="oracle"):
-        if not isinstance(statement, exp.Create) or statement.kind not in {
-            "TABLE",
-            "VIEW",
-        }:
-            continue
-        schema = statement.this
-        table = schema.this if isinstance(schema, exp.Schema) else schema
-        key = (_name(table.args["db"]), _name(table.this))
-        if isinstance(statement.expression, exp.Query):
-            materialized = (
-                any(
-                    isinstance(p, exp.MaterializedProperty)
-                    for p in statement.args["properties"].expressions
+    for statement in statements:
+        if statement.kind == "TABLE":
+            schema = statement.this
+            key = (_name(schema.this.args["db"]), _name(schema.this.this))
+            columns = {
+                _name(c.this): KeyColumn(
+                    _type(c.args["kind"]),
+                    any(
+                        isinstance(k.kind, exp.NotNullColumnConstraint)
+                        for k in c.constraints
+                    ),
                 )
-                if statement.args.get("properties")
-                else False
+                for c in schema.expressions
+                if isinstance(c, exp.ColumnDef)
+            }
+            tables[key] = KeyTable(*key, "base table", columns)
+    # A view's column takes the type that sqlglot infers from the base tables.
+    mapping = MappingSchema(
+        {
+            owner: {
+                t.name: {c: k.type or "UNKNOWN" for c, k in t.columns.items()}
+                for t in tables.values()
+                if t.owner == owner
+            }
+            for owner in {t.owner for t in tables.values()}
+        },
+        dialect="oracle",
+    )
+    for statement in statements:
+        if statement.kind == "VIEW":
+            table = statement.this
+            key = (_name(table.args["db"]), _name(table.this))
+            properties = statement.args.get("properties")
+            materialized = properties is not None and any(
+                isinstance(p, exp.MaterializedProperty) for p in properties.expressions
             )
-            columns = [
-                _name(p.args["alias"]) if isinstance(p, exp.Alias) else _name(p.this)
-                for p in statement.expression.selects
-            ]
+            query = qualify(
+                statement.expression.copy(), schema=mapping, dialect="oracle"
+            )
+            annotated = annotate_types(query, schema=mapping, dialect="oracle")
+            columns = {
+                p.alias_or_name.upper(): KeyColumn(_type(p.type), None)
+                for p in annotated.selects
+            }
             tables[key] = KeyTable(
                 *key, "materialized view" if materialized else "view", columns
             )
-        else:
-            columns = [
-                _name(c.this)
-                for c in schema.expressions
-                if isinstance(c, exp.ColumnDef)
-            ]
-            tables[key] = KeyTable(*key, "base table", columns)
     synonyms = {
         m[1].upper(): (m[2].upper(), m[3].upper()) for m in _SYNONYM.finditer(text)
     }
@@ -106,6 +150,12 @@ def load() -> AnswerKey:
 def lineage_rows() -> list[dict[str, str]]:
     with (ANSWER_KEY / "lineage.csv").open(encoding="utf-8", newline="") as file:
         return list(csv.DictReader(file))
+
+
+def _split(name: str) -> tuple[str | None, str, str]:
+    """Split a dotted column name into its owner, table and column."""
+    *owner, table, column = name.split(".")
+    return (owner[0] if owner else None, table, column)
 
 
 def dbml_name(*parts: str | None) -> str:
@@ -146,6 +196,7 @@ def score_schema(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
     claimed: set[tuple[Name, str]] = set()
     yield from _score_tables(graph, key, claimed)
     yield from _score_kinds(graph, key)
+    yield from _score_types(graph, key)
     yield from _score_ambiguities(graph, key, claimed)
     shown_tables, shown_columns = shown(key)
     for name in sorted(shown_tables - {t for t, c in claimed if not c}):
@@ -180,6 +231,38 @@ def _score_kinds(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
             yield Deviation("kind", dbml_name(table.owner, table.name), "extra")
 
 
+def _single_type(column: ichnos.Column) -> ichnos.Type | None:
+    """Return the one type that ichnos claims for a column, as the DBML file writes it."""
+    declared = {
+        d.types[column.name]
+        for d in column.table.declarations
+        if column.name in d.types
+    }
+    if len(declared) == 1:
+        return declared.pop()
+    return next(iter(column.types)) if len(column.types) == 1 else None
+
+
+def _score_types(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
+    """Yield each type and nullable claim that the answer key contradicts. Recall is not checked for either."""
+    for table in graph.tables:
+        resolved = key.resolve(table.owner, table.name)
+        if resolved is None:
+            continue
+        for column in table.columns:
+            truth = key.tables[resolved].columns.get(column.name)
+            subject = dbml_name(table.owner, table.name, column.name)
+            claimed = _single_type(column)
+            if (
+                truth is not None
+                and None not in {truth.type, claimed}
+                and claimed != truth.type
+            ):
+                yield Deviation("type", subject, "extra")
+            if truth is not None and column.nullable and truth.not_null:
+                yield Deviation("nullable", subject, "extra")
+
+
 def _score_ambiguities(
     graph: ichnos.Graph, key: AnswerKey, claimed: set[tuple[Name, str]]
 ) -> Iterator[Deviation]:
@@ -196,7 +279,15 @@ def _truths(ambiguity: ichnos.Ambiguity, key: AnswerKey) -> list[tuple[Name, str
     """Return the candidates of an ambiguity that hold in the answer key."""
     truths: list[tuple[Name, str]] = []
     for candidate in ambiguity.candidates:
-        if ambiguity.kind == "column":
+        if ambiguity.kind == "type":
+            owner, table, column = _split(ambiguity.subject)
+            resolved = key.resolve(owner, table)
+            truth = (
+                None if resolved is None else key.tables[resolved].columns.get(column)
+            )
+            if resolved is not None and truth is not None and truth.type == candidate:
+                truths.append((resolved, column))
+        elif ambiguity.kind == "column":
             owner, table, column = candidate.split(".")
             resolved = key.resolve(owner, table)
             if resolved is not None and column in key.tables[resolved].columns:

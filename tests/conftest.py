@@ -50,8 +50,10 @@ class DbmlChecker:
 
     def close(self) -> None:
         assert self.process.stdin is not None
+        assert self.process.stdout is not None
         self.process.stdin.close()
         self.process.wait()
+        self.process.stdout.close()
 
 
 @pytest.fixture(scope="session")

@@ -16,7 +16,7 @@ from ichnos._graph import (
     infer,
 )
 from ichnos._infer import ContradictionReason
-from ichnos._read import Position, TableKind
+from ichnos._read import Position, TableKind, Type
 
 __all__ = [
     "Ambiguity",
@@ -31,6 +31,7 @@ __all__ = [
     "Query",
     "Table",
     "TableKind",
+    "Type",
     "UnparsedQuery",
     "dbml",
     "infer",

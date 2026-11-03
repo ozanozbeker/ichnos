@@ -11,7 +11,7 @@ from ichnos._graph import Ambiguity, Column, Graph, Table, count
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from ichnos._read import Position
+    from ichnos._read import Position, Type
 
 _POSITIONS: tuple[Position, ...] = (
     "select",
@@ -27,6 +27,9 @@ _POSITIONS: tuple[Position, ...] = (
 _ESCAPES = str.maketrans(
     {"\\": "\\\\", '"': '\\"', "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 )
+_TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+# The output lists at most this many observed values, and only their number above it (ADR 0003).
+_OBSERVED = 20
 _BARE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -60,6 +63,8 @@ def _project(graph: Graph) -> str:
     note = [
         f"Inferred by ichnos from {len(graph.queries)} queries, with no database connection.",
         "Counts are distinct queries. A column with no type evidence has the type `unknown`.",
+        "A column with evidence for two types writes both, such as `text|number`, an ambiguity.",
+        "`null` claims a column can hold NULL. ichnos never claims NOT NULL.",
     ]
     lines = "\n".join(f"  {line}" for line in note)
     return (
@@ -89,12 +94,39 @@ def _table(table: Table) -> str:
 
 
 def _column(column: Column) -> str:
+    types = [t for t in _TYPES if t in column.types]
+    declared = {
+        d.types[column.name]
+        for d in column.table.declarations
+        if column.name in d.types
+    }
+    # A declared column takes its declared type outright, and two types are an ambiguity (ADR 0007).
+    type_ = declared.pop() if len(declared) == 1 else "|".join(types) or "unknown"
+    observed = list(column.observed)
     settings: list[tuple[str, int | str | bool]] = [
         ("declared", count(column.declared))
     ]
     settings += [(p, count(column.references.get(p, ()))) for p in _POSITIONS]
-    settings += [("undeclared", column.undeclared)]
-    return f"  {_name(column.name)} unknown{_settings(settings)}"
+    settings += [(t, count(column.types.get(t, ()))) for t in _TYPES]
+    settings += [
+        ("nullable", count(column.nullable)),
+        (
+            "observed",
+            ", ".join(map(_plain, observed)) if len(observed) <= _OBSERVED else "",
+        ),
+        ("observed_count", len(observed) if len(observed) > _OBSERVED else 0),
+        ("undeclared", column.undeclared),
+    ]
+    null = ["null"] if column.nullable else []
+    return f"  {_name(column.name)} {_name(type_)}{_settings(settings, null)}"
+
+
+def _plain(literal: str) -> str:
+    """Write an observed value without its quotes, unless a comma or an outer space needs them (ADR 0011)."""
+    if not literal.startswith("'"):
+        return literal
+    value = literal[1:-1].replace("''", "'")
+    return literal if "," in value or value != value.strip(" ") else value
 
 
 def _ambiguity(ambiguity: Ambiguity) -> str:
@@ -107,9 +139,14 @@ def _ambiguity(ambiguity: Ambiguity) -> str:
     return reading if ambiguity.query is None else f"{ambiguity.query.name}: {reading}"
 
 
-def _settings(settings: Sequence[tuple[str, int | str | bool]]) -> str:
-    """Write each custom property that holds a count above 0, a string that is not empty, or `true`."""
-    written = [f"{key}: {_value(value)}" for key, value in settings if value]
+def _settings(
+    settings: Sequence[tuple[str, int | str | bool]], keywords: Sequence[str] = ()
+) -> str:
+    """Write the keyword settings, then each custom property that holds a count above 0, a string that is not empty, or `true`."""
+    written = [
+        *keywords,
+        *(f"{key}: {_value(value)}" for key, value in settings if value),
+    ]
     return f" [{', '.join(written)}]" if written else ""
 
 

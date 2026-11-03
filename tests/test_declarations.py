@@ -190,3 +190,17 @@ def test_user_read_as_a_column_contradicts_nothing():
         {"c": CREATE, "q": "SELECT t.a, USER FROM m.t t WHERE t.c = UID"}
     )
     assert _table(graph, "T").contradictions == ()
+
+
+def test_a_star_among_inserted_values_expands_through_a_declaration():
+    graph = ichnos.infer(
+        {
+            "c": CREATE,
+            "d": "CREATE TABLE m.u AS SELECT s.p, s.q FROM s",
+            "i": "INSERT INTO m.t SELECT * FROM m.u",
+            "j": "INSERT INTO m.t SELECT * FROM x",
+        }
+    )
+    table = _table(graph, "T")
+    assert table.contradictions == ()
+    assert [q.name for q in table.columns[0].references["insert"]] == ["i"]

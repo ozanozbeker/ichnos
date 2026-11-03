@@ -27,7 +27,10 @@ def test_a_count_is_of_queries_not_of_references():
             "q": "SELECT o.status FROM sales.orders o WHERE o.status = 'A' OR o.status = 'B'"
         }
     )
-    assert "STATUS unknown [select: 1, where: 1]" in ichnos.dbml(graph)
+    assert (
+        "STATUS text [select: 1, where: 1, text: 1, observed: 'A, B']"
+        in ichnos.dbml(graph)
+    )
 
 
 def test_an_unqualified_column_over_two_tables_gives_no_evidence():
