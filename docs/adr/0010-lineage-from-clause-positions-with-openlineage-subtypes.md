@@ -32,7 +32,7 @@ A bind variable, a literal, `SYSDATE`, a sequence's `NEXTVAL` or `CURRVAL`, a ps
 A `DELETE` gives none, because it computes no value.
 A local relation is never an end, and ichnos traces through it to the tables it reads.
 
-[Report names and columns](https://github.com/ozanozbeker/ichnos/issues/34) names each report and output column.
+[ADR 0009](0009-reports-take-their-file-name-and-output-columns-take-oracles-name.md) names each report and output column.
 A report's `*` that stays unexpanded gives no output column.
 
 An end names a table exactly as ichnos infers it.
