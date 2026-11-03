@@ -16,7 +16,15 @@ import cyclopts
 from ichnos._corpus import read
 from ichnos._dbml import BUDGET, Detail, table_name
 from ichnos._dbml import dbml as write_dbml
-from ichnos._graph import Graph, IchnosError, Table
+from ichnos._graph import (
+    Column,
+    Graph,
+    IchnosError,
+    Indirect,
+    OutputColumn,
+    Report,
+    Table,
+)
 from ichnos._llm import summary as write_summary
 
 if TYPE_CHECKING:
@@ -68,19 +76,30 @@ def _note_unparsed(graph: Graph, corpus: Path) -> None:
         )
 
 
+def _find[T](
+    name: str,
+    kind: str,
+    lookup: Callable[[str], T],
+    known: Iterable[str],
+    where: str = "",
+) -> T:
+    """Look a name up, and turn a missing one into a user error that names up to three close matches (ADR 0014)."""
+    try:
+        return lookup(name)
+    except KeyError:
+        # A report name keeps its file's case, which a user on Windows can type wrongly.
+        names = {n.casefold(): n for n in known}
+        close = [
+            names[n] for n in difflib.get_close_matches(name.casefold(), names, n=3)
+        ]
+        hint = f"; did you mean {' or '.join(close)}?" if close else ""
+        message = f"no {kind} {name}{where}{hint}"
+        raise IchnosError(message) from None
+
+
 def _tables(graph: Graph, names: Iterable[str]) -> list[Table]:
-    """Look each table up, and turn a missing one into a user error that names up to three close matches."""
-    found: list[Table] = []
-    for name in names:
-        try:
-            found.append(graph.table(name))
-        except KeyError:
-            known = [table_name(t) for t in graph.tables]
-            close = difflib.get_close_matches(name.upper(), known, n=3)
-            hint = f"; did you mean {' or '.join(close)}?" if close else ""
-            message = f"no table {name}{hint}"
-            raise IchnosError(message) from None
-    return found
+    known = [table_name(t) for t in graph.tables]
+    return [_find(name, "table", graph.table, known) for name in names]
 
 
 def _write_slice(text: str, budget: int, output: Path | None) -> None:
@@ -251,6 +270,130 @@ def join_path(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
     found = graph.join_path(_tables(graph, tables))
     _write_slice(write_dbml(found, budget, detail, examples), budget, output)
     _note_unparsed(graph, corpus)
+
+
+_START = cyclopts.Group(
+    "Start",
+    help="Name exactly one table or report to start at.",
+    validator=cyclopts.validators.LimitedChoice(1, 1),
+)
+
+
+@app.command
+@_command
+def upstream(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
+    corpus: Path,
+    /,
+    *,
+    table: Annotated[str | None, cyclopts.Parameter(group=_START)] = None,
+    report: Annotated[str | None, cyclopts.Parameter(group=_START)] = None,
+    column: str | None = None,
+    indirect: Indirect = "first_hop",
+    budget: Budget = BUDGET,
+    detail: Detail = "compact",
+    examples: bool = False,
+    output: Output = None,
+    suffix: Suffix = (".sql",),
+    encoding: str = "cp1252",
+) -> None:
+    """Write where a table's, column's, report's or output column's values come from, as a DBML slice.
+
+    Parameters
+    ----------
+    corpus
+        A folder of query files, or one file.
+    table
+        The table to start at, such as `MART.CUSTOMER_SEGMENTS`.
+    report
+        The report to start at, such as `055_key_customers`.
+    column
+        A column of the table, or an output column of the report, to start at instead.
+    indirect
+        `first_hop` keeps the indirect dependencies of the queries that write the start, and `all` keeps every one.
+    budget
+        The most characters the slice holds, which it cuts to fit down to its core.
+    detail
+        `compact` drops each column's position and type counts, and `full` keeps them.
+    examples
+        End the slice with example queries as comments.
+    output
+        The file to write, instead of stdout.
+    suffix
+        The suffix of the files to read in a folder, which can repeat.
+    encoding
+        The codec for a file with no BOM that fails UTF-8.
+    """
+    graph = _graph(corpus, suffix, encoding)
+    begin: Table | Column | Report | OutputColumn
+    if report is not None:
+        found = _find(report, "report", graph.report, (r.name for r in graph.reports))
+        begin = found
+        if column is not None:
+            known = (c.name for c in found.output_columns)
+            where = f" in {report}"
+            begin = _find(column, "output column", found.output_column, known, where)
+    else:
+        begin = _start(graph, table or "", column)
+    text = write_dbml(graph.upstream(begin, indirect), budget, detail, examples)
+    _write_slice(text, budget, output)
+    _note_unparsed(graph, corpus)
+
+
+@app.command
+@_command
+def downstream(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
+    corpus: Path,
+    /,
+    *,
+    table: str,
+    column: str | None = None,
+    indirect: Indirect = "first_hop",
+    budget: Budget = BUDGET,
+    detail: Detail = "compact",
+    examples: bool = False,
+    output: Output = None,
+    suffix: Suffix = (".sql",),
+    encoding: str = "cp1252",
+) -> None:
+    """Write what a table or a column feeds, as a DBML slice.
+
+    Parameters
+    ----------
+    corpus
+        A folder of query files, or one file.
+    table
+        The table to start at, such as `SALES.ORDERS`.
+    column
+        A column of the table to start at instead.
+    indirect
+        `first_hop` keeps the indirect dependencies of the queries that read the start, and `all` keeps every one.
+    budget
+        The most characters the slice holds, which it cuts to fit down to its core.
+    detail
+        `compact` drops each column's position and type counts, and `full` keeps them.
+    examples
+        End the slice with example queries as comments.
+    output
+        The file to write, instead of stdout.
+    suffix
+        The suffix of the files to read in a folder, which can repeat.
+    encoding
+        The codec for a file with no BOM that fails UTF-8.
+    """
+    graph = _graph(corpus, suffix, encoding)
+    begin = _start(graph, table, column)
+    text = write_dbml(graph.downstream(begin, indirect), budget, detail, examples)
+    _write_slice(text, budget, output)
+    _note_unparsed(graph, corpus)
+
+
+def _start(graph: Graph, table: str, column: str | None) -> Table | Column:
+    found = _tables(graph, [table])[0]
+    if column is None:
+        return found
+    known = (c.name for c in found.columns)
+    where = f" in {table_name(found)}"
+    return _find(column, "column", found.column, known, where)
 
 
 @app.command

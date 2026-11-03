@@ -216,3 +216,68 @@ def test_a_core_over_the_budget_is_written_whole_with_one_stderr_line(
         err
         == f"ichnos: the core of this slice is {len(out):,} characters, over the 100-character budget\n"
     )
+
+
+def test_upstream_and_downstream_mirror_the_api(capsys: pytest.CaptureFixture[str]):
+    graph = ichnos.read(answer_key.QUERIES)
+    report = graph.report("055_key_customers")
+    cases = [
+        (["upstream", "--report", "055_key_customers"], graph.upstream(report)),
+        (
+            ["upstream", "--report", "055_key_customers", "--column", "customer_name"],
+            graph.upstream(report.output_column("customer_name")),
+        ),
+        (
+            ["upstream", "--table", "mart.customer_segments", "--indirect", "all"],
+            graph.upstream(graph.table("mart.customer_segments"), "all"),
+        ),
+        (
+            ["downstream", "--table", "sales.orders"],
+            graph.downstream(graph.table("sales.orders")),
+        ),
+        (
+            ["downstream", "--table", "sales.orders", "--column", "order_id"],
+            graph.downstream(graph.table("sales.orders").column("order_id")),
+        ),
+    ]
+    for tokens, found in cases:
+        command, *options = tokens
+        code, out, err = _run(capsys, command, str(answer_key.QUERIES), *options)
+        assert (code, err) == (0, "")
+        assert out == ichnos.dbml(found)
+
+
+@pytest.mark.parametrize(
+    ("tokens", "line"),
+    [
+        (
+            ["upstream", "--report", "055_KEY_CUSTOMERS"],
+            "ichnos: no report 055_KEY_CUSTOMERS; did you mean 055_key_customers or 056_key_customers_dashboard or 001_active_customers?\n",
+        ),
+        (
+            ["upstream", "--report", "055_key_customers", "--column", "nope"],
+            "ichnos: no output column nope in 055_key_customers\n",
+        ),
+        (
+            ["downstream", "--table", "sales.orders", "--column", "order_idd"],
+            "ichnos: no column order_idd in SALES.ORDERS; did you mean ORDER_ID or ORDER_DATE or ORDER_TOTAL?\n",
+        ),
+    ],
+)
+def test_a_missing_start_names_its_close_matches(
+    capsys: pytest.CaptureFixture[str], tokens: list[str], line: str
+):
+    command, *options = tokens
+    assert _run(capsys, command, str(answer_key.QUERIES), *options) == (1, "", line)
+
+
+def test_upstream_takes_exactly_one_of_table_and_report(
+    capsys: pytest.CaptureFixture[str],
+):
+    code, _, err = _run(capsys, "upstream", str(answer_key.QUERIES))
+    assert code == 2
+    assert err
+    code, _, err = _run(
+        capsys, "upstream", str(answer_key.QUERIES), "--table", "x", "--report", "y"
+    )
+    assert code == 2

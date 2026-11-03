@@ -1,0 +1,210 @@
+Project ichnos {
+  database_type: 'Oracle'
+  Note: '''
+  Downstream of SALES.ORDER_LINES.QUANTITY, with indirect dependencies on the first hop: 6 of 32 tables.
+  Inferred from 60 queries, with no database connection.
+  A column with no type evidence has the type `unknown`.
+  `complete: true` means the declarations list every column.
+  A table with no `kind` may list only some of its columns.
+  The schema `report` holds the reports, which are queries, not tables.
+  Cut to fit 8,000 characters: the example 056_key_customers_dashboard, the example 055_key_customers, the example 054_segment_summary, the example 052_create_key_customers_view, the example 058_category_monthly_eur, the example 057_mart_daily_checks#1, the example 049_create_customer_segments, the example 053_create_category_monthly_mview, the example 048_merge_customer_daily_sales, the example 047_create_customer_daily_sales.
+  '''
+}
+
+Table SALES.ORDER_LINES [read: 9, write: 1] {
+  QUANTITY number
+}
+
+Table MART.ORDER_LINE_FACTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  UNITS number [declared: 1]
+  NET_AMOUNT number [declared: 1]
+}
+
+Table MART.CUSTOMER_DAILY_SALES [kind: 'base table', complete: true, declared: 1, read: 4, write: 1, keys: '(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE): merge 1, grouped 1'] {
+  UNITS number [declared: 1]
+  NET_AMOUNT number [declared: 1]
+}
+
+Table MART.MV_CATEGORY_MONTHLY [kind: 'materialized view', complete: true, declared: 1, read: 1, keys: '(SALES_MONTH, CATEGORY_NAME, CURRENCY_CODE): grouped 1'] {
+  NET_AMOUNT number [declared: 1]
+}
+
+Table MART.CUSTOMER_SEGMENTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  NET_AMOUNT_12M number [declared: 1]
+}
+
+Table MART.V_KEY_CUSTOMERS [kind: 'view', complete: true, declared: 1, read: 1] {
+  NET_AMOUNT_12M unknown [declared: 1]
+}
+
+Table report."004_order_lines_with_products" [kind: 'report'] {
+  ORDER_ID unknown
+  LINE_NO unknown
+  SKU unknown
+  PRODUCT_NAME unknown
+  QUANTITY unknown
+  UNIT_PRICE unknown
+}
+
+Table report."007_unshipped_order_lines" [kind: 'report'] {
+  ORDER_ID unknown
+  LINE_NO unknown
+  QUANTITY unknown
+  QTY_SHIPPED number
+}
+
+Table report."011_monthly_revenue_by_currency" [kind: 'report'] {
+  MONTH_START datetime
+  CURRENCY_NAME unknown
+  REVENUE number
+}
+
+Table report."042_join_using" [kind: 'report'] {
+  ORDER_ID unknown
+  ORDER_DATE unknown
+  LINE_NO unknown
+  QUANTITY unknown
+}
+
+Table report."057_mart_daily_checks#1" [kind: 'report'] {
+  SALES_DATE unknown
+  CURRENCY_CODE unknown
+  LINE_COUNT number
+  NET_AMOUNT number
+}
+
+Table report."058_category_monthly_eur" [kind: 'report'] {
+  SALES_MONTH unknown
+  CATEGORY_NAME unknown
+  NET_AMOUNT unknown
+  ORDER_COUNT unknown
+}
+
+Table report."054_segment_summary" [kind: 'report'] {
+  SEGMENT unknown
+  CUSTOMER_COUNT number
+  NET_AMOUNT number
+}
+
+Table report."055_key_customers" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  NET_AMOUNT_12M unknown
+}
+
+Table report."056_key_customers_dashboard" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  NET_AMOUNT_12M unknown
+}
+
+Metadata Column SALES.ORDER_LINES.QUANTITY {
+  self_dependency: 'IDENTITY 1'
+}
+
+Dep: MART.ORDER_LINE_FACTS.NET_AMOUNT -> MART.CUSTOMER_DAILY_SALES.NET_AMOUNT [aggregation: 2]
+Dep: MART.ORDER_LINE_FACTS.UNITS -> MART.CUSTOMER_DAILY_SALES.UNITS [aggregation: 2]
+Dep: MART.CUSTOMER_DAILY_SALES.NET_AMOUNT -> MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M [aggregation: 1]
+Dep: MART.ORDER_LINE_FACTS.NET_AMOUNT -> MART.MV_CATEGORY_MONTHLY.NET_AMOUNT [aggregation: 1]
+Dep: SALES.ORDER_LINES.QUANTITY -> MART.ORDER_LINE_FACTS.NET_AMOUNT [transformation: 2]
+Dep: SALES.ORDER_LINES.QUANTITY -> MART.ORDER_LINE_FACTS.UNITS [identity: 2]
+Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> MART.V_KEY_CUSTOMERS.NET_AMOUNT_12M [identity: 1]
+Dep: SALES.ORDER_LINES.QUANTITY -> report."004_order_lines_with_products".QUANTITY [identity: 1]
+Dep: SALES.ORDER_LINES.QUANTITY -> report."007_unshipped_order_lines" [filter: 1]
+Dep: SALES.ORDER_LINES.QUANTITY -> report."007_unshipped_order_lines".QUANTITY [identity: 1]
+Dep: SALES.ORDER_LINES.QUANTITY -> report."011_monthly_revenue_by_currency".REVENUE [aggregation: 1]
+Dep: SALES.ORDER_LINES.QUANTITY -> report."042_join_using".QUANTITY [identity: 1]
+Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> report."054_segment_summary".NET_AMOUNT [aggregation: 1]
+Dep: MART.V_KEY_CUSTOMERS.NET_AMOUNT_12M -> report."055_key_customers".NET_AMOUNT_12M [identity: 1]
+Dep: MART.V_KEY_CUSTOMERS.NET_AMOUNT_12M -> report."056_key_customers_dashboard".NET_AMOUNT_12M [identity: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.NET_AMOUNT -> report."057_mart_daily_checks#1".NET_AMOUNT [aggregation: 1]
+Dep: MART.MV_CATEGORY_MONTHLY.NET_AMOUNT -> report."058_category_monthly_eur".NET_AMOUNT [identity: 1]
+
+// 045_create_order_line_facts
+// CREATE TABLE mart.order_line_facts AS
+// SELECT o.order_id,
+//        ol.line_no,
+//        o.customer_id,
+//        TRUNC(o.order_date) AS sales_date,
+//        o.currency_code,
+//        ol.product_id,
+//        p.category_id,
+//        ol.quantity AS units,
+//        ol.quantity * ol.unit_price * (1 - NVL(ol.discount_pct, 0) / 100) AS net_amount
+//   FROM sales.orders o
+//   JOIN sales.order_lines ol ON ol.order_id = o.order_id
+//   JOIN inv.products p ON p.product_id = ol.product_id
+//  WHERE o.status <> 'CANCELLED'
+
+// 046_append_order_line_facts
+// -- No column list: the values map to the columns in the order that 045 declares.
+// INSERT INTO mart.order_line_facts
+// SELECT o.order_id,
+//        ol.line_no,
+//        o.customer_id,
+//        TRUNC(o.order_date),
+//        o.currency_code,
+//        ol.product_id,
+//        p.category_id,
+//        ol.quantity,
+//        ol.quantity * ol.unit_price * (1 - NVL(ol.discount_pct, 0) / 100)
+//   FROM sales.orders o
+//   JOIN sales.order_lines ol ON ol.order_id = o.order_id
+//   JOIN inv.products p ON p.product_id = ol.product_id
+//  WHERE o.status <> 'CANCELLED'
+//    AND o.order_date >= TRUNC(SYSDATE)
+
+// 023_copy_order_lines
+// INSERT INTO sales.order_lines (order_id, line_no, product_id, quantity, unit_price)
+// SELECT :new_order_id, src.line_no, src.product_id, src.quantity, p.list_price
+//   FROM sales.order_lines src
+//   JOIN inv.products p ON p.product_id = src.product_id
+//  WHERE src.order_id = :source_order_id
+//    AND p.status = 'ACTIVE'
+
+// 004_order_lines_with_products
+// SELECT ol.order_id,
+//        ol.line_no,
+//        p.sku,
+//        p.product_name,
+//        ol.quantity,
+//        ol.unit_price
+//   FROM sales.order_lines ol
+//   LEFT JOIN inv.products p
+//     ON p.product_id = ol.product_id
+//  WHERE ol.order_id = :order_id
+//  ORDER BY ol.line_no
+
+// 007_unshipped_order_lines
+// -- The (+) sits on the left of each condition, so SHIPMENT_LINES is the optional side.
+// SELECT ol.order_id, ol.line_no, ol.quantity, NVL(sl.qty_shipped, 0) AS qty_shipped
+//   FROM sales.order_lines ol, inv.shipment_lines sl
+//  WHERE sl.order_id (+) = ol.order_id
+//    AND sl.line_no (+) = ol.line_no
+//    AND NVL(sl.qty_shipped, 0) < ol.quantity
+
+// 011_monthly_revenue_by_currency
+// WITH paid_orders AS (
+//   SELECT o.order_id, o.order_date, o.currency_code
+//     FROM sales.orders o
+//    WHERE o.status IN ('PAID', 'SHIPPED')
+// ),
+// line_totals AS (
+//   SELECT ol.order_id, SUM(ol.quantity * ol.unit_price * (1 - NVL(ol.discount_pct, 0) / 100)) AS net_amount
+//     FROM sales.order_lines ol
+//    GROUP BY ol.order_id
+// )
+// SELECT TRUNC(po.order_date, 'MM') AS month_start,
+//        cur.currency_name,
+//        SUM(lt.net_amount) AS revenue
+//   FROM paid_orders po
+//   JOIN line_totals lt ON lt.order_id = po.order_id
+//   JOIN ref.currencies cur ON cur.currency_code = po.currency_code
+//  GROUP BY TRUNC(po.order_date, 'MM'), cur.currency_name
+//  ORDER BY month_start
+
+// 042_join_using
+// SELECT order_id, o.order_date, ol.line_no, ol.quantity
+//   FROM sales.orders o
+//   JOIN sales.order_lines ol USING (order_id)
+//  WHERE o.status = 'NEW'
