@@ -32,8 +32,8 @@ A bind variable, a literal, `SYSDATE`, a sequence's `NEXTVAL` or `CURRVAL`, a ps
 A `DELETE` gives none, because it computes no value.
 A local relation is never an end, and ichnos traces through it to the tables it reads.
 
-An output column is identified by its report and its position, because a report can return two columns with one name, or an expression with no alias.
-Its name is the alias, else the bare column's name, else the expression's text in sqlglot's Oracle output, uppercased.
+[Report names and columns](https://github.com/ozanozbeker/ichnos/issues/34) names each report and output column.
+A report's `*` that stays unexpanded gives no output column.
 
 An end names a table exactly as ichnos infers it.
 So a path continues from a written table to a query that reads it only where both write the same name, and an unprefixed `X` stays apart from `MART.X` ([issue 9](https://github.com/ozanozbeker/ichnos/issues/9)).
@@ -44,7 +44,7 @@ A declaration maps an `INSERT` with no column list and expands a `*` ([ADR 0008]
 With no declaration, or a contradicted one:
 
 - An unmapped value gives a column-to-table dependency from each column it reads to the written table, or a column-to-report one, with the value's own direct subtype.
-- A `*` that stays unexpanded gives a table-to-table `IDENTITY` dependency.
+- A `*` that stays unexpanded gives a table-to-table `IDENTITY` dependency, or a table-to-report one.
 
 ichnos never maps a value by its select-list name, as sqlglot and sqllineage do.
 046's select list names `QUANTITY` where the table has `UNITS`, and names nothing for two values.
@@ -70,7 +70,7 @@ An ambiguous upstream column gives a dependency ambiguity, which lists each cand
 ichnos stores each dependency at the finest level its query shows.
 A table-to-table dependency holds wherever a column-level or mixed dependency joins the two tables, and its count is the number of distinct queries that hold one.
 The API and the output compute it.
-An unexpanded `*` gives the only table-to-table dependency that ichnos stores.
+An unexpanded `*` gives the only table-to-table or table-to-report dependency that ichnos stores.
 
 A dependency is evidence for no relationship and no type.
 [ADR 0002](0002-relationships-from-bare-equality-direction-from-key.md) counts only bare `=` for a relationship.
