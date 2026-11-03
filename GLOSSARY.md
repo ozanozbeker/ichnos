@@ -21,12 +21,15 @@ _Avoid_: constant
 It declares the table's kind and its full column list.
 _Avoid_: DDL, definition
 
+**Declaration**: The table kind and the ordered column list that a creating query states for the table it creates.
+_Avoid_: table definition, declared schema
+
 **Report**: A query that reads tables and writes none.
 It is never a table, because no other query can read it.
 Two files that hold the same text are two reports.
 _Avoid_: asset, dashboard, output
 
-**Unparsed query**: A query the parser cannot read.
+**Unparsed query**: A query that ichnos cannot read whole, or one that is not a `SELECT`, DML or a creating query.
 ichnos skips it and lists it.
 _Avoid_: invalid query, failed query
 
@@ -50,6 +53,10 @@ _Avoid_: schema (for the namespace)
 Base tables, views and materialized views are all tables, and a synonym name counts as a table name.
 _Avoid_: relation, entity, object
 
+**Table kind**: Whether a table is a base table, a view or a materialized view.
+Only a declaration states it.
+_Avoid_: object type, table type
+
 **Local relation**: A CTE or derived table defined inside one query.
 It is never a table.
 _Avoid_: subquery table, temp table
@@ -57,7 +64,10 @@ _Avoid_: subquery table, temp table
 **Column**: A named attribute of a table that some query references or a creating query declares.
 _Avoid_: field, attribute
 
-**Pseudocolumn**: Oracle's term for a value such as `ROWNUM`, `ROWID`, `LEVEL`, `CURRVAL` or `NEXTVAL` that a query reads like a column.
+**Undeclared column**: A column that a query references in a table whose declarations do not list it.
+_Avoid_: missing column, extra column
+
+**Pseudocolumn**: Oracle's term for a value such as `ROWNUM`, `ROWID`, `LEVEL`, `ORA_ROWSCN`, `CURRVAL` or `NEXTVAL` that a query reads like a column.
 It is never a column of the inferred schema.
 
 **Column reference**: One occurrence of a column name in one query.
@@ -115,6 +125,10 @@ _Avoid_: optional
 
 **Ambiguity**: A point where the corpus admits more than one reading, such as an unqualified column in a query over two tables. ichnos records every candidate reading and picks none.
 _Avoid_: conflict, uncertainty, warning
+
+**Contradicted declaration**: A declaration that a query shows no longer describes its table.
+The query holds an undeclared column, declares the table differently, or inserts a different number of values.
+_Avoid_: stale declaration, invalid declaration
 
 ## Lineage
 

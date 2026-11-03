@@ -30,7 +30,7 @@ They miss `PROMOTIONS (PROMO_ID)`, every composite key, and the unique keys `EMA
 Four query shapes give key evidence.
 Each is its own kind, counted in distinct queries ([ADR 0001](0001-evidence-counts-and-no-attribution-on-ambiguity.md)):
 
-- `generated`: an `INSERT`, a `MERGE ... INSERT` or an `UPDATE ... SET` assigns `NEXTVAL` or `SYS_GUID()` to a column that a column list or the `SET` names.
+- `generated`: an `INSERT`, a `MERGE ... INSERT` or an `UPDATE ... SET` assigns `NEXTVAL` or `SYS_GUID()` to a column that a column list or the `SET` names, or that a declaration maps by position ([ADR 0008](0008-declarations-settle-ambiguities-until-contradicted.md)).
   In the corpus, 022 gives `ORDERS (ORDER_ID)`.
   `CURRVAL` gives nothing, because it copies a parent's key into a foreign key.
 - `merge`: the target columns that the `ON` clause of a `MERGE` compares with `=`.

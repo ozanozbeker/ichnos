@@ -17,10 +17,11 @@ A library user whose environment holds `sqlglotc` would hit that error.
 A bug in sqlglot's own output goes upstream as a pull request, and ichnos waits for the release.
 If implementation needs a fix before the release, a pre-pass rewrites the query text using sqlglot's tokenizer.
 A rule that belongs to ichnos, such as dropping pseudocolumns, reads the tree after the parse.
+sqlglot 30.26.0 reads `USER`, `UID`, `SESSIONTIMEZONE`, `DBTIMEZONE`, `ORA_INVOKING_USER` and `ORA_INVOKING_USERID` as columns, so that rule drops an unqualified one too.
 These bugs in sqlglot 30.26.0 need an upstream fix:
 
 - A positional bind such as `:1` raises.
-- `CREATE MATERIALIZED VIEW` with a `BUILD` or `REFRESH` clause, and an `EDITIONABLE` view, return an opaque `exp.Command`.
+- `CREATE MATERIALIZED VIEW` with a `BUILD`, `REFRESH` or `ON PREBUILT TABLE` clause, an `EDITIONABLE` or `EDITIONING` view, and `CREATE PRIVATE TEMPORARY TABLE` return an opaque `exp.Command`.
 - `FOR UPDATE OF a.x` reads `x` as a table.
 - `optimizer.scope` lists the self-reference of a recursive CTE as a base table, because Oracle writes no `RECURSIVE`.
 
@@ -29,11 +30,12 @@ It splits each file into queries at `;` tokens and at lines that hold only `/`, 
 It reads one query at a time.
 It resolves aliases, CTEs and derived tables within the query, and records an unqualified column in a scope with several sources as an ambiguity with its candidates.
 Evidence counts and declarations from creating queries combine queries, so they live above the module.
-The schema that `lineage()` needs comes from the query alone, which keeps an ambiguity open as ADR-0001 requires.
+The schema that `lineage()` needs comes from the query and from declarations ([ADR 0008](0008-declarations-settle-ambiguities-until-contradicted.md)), never from references in other queries, as ADR-0001 requires.
 [Lineage inference rules](https://github.com/ozanozbeker/ichnos/issues/35) chooses between `lineage()` and ichnos's own tracing over `optimizer.scope`.
 
 A query is read whole or not at all.
 A parse that raises, a `Command` result, or a later step that raises makes the query an unparsed query, and the run continues.
+So does a query that is not a `SELECT`, DML or a creating query, such as `ALTER TABLE` or `DROP`.
 ichnos lists each unparsed query with its file, position and error.
 It never uses the partial tree from `error_level=IGNORE`, because that tree can drop or invent columns with no sign.
 SQL*Plus syntax other than `/`, such as `SET`, `PROMPT` or `&var`, is outside v1, and a query that holds it is unparsed.
