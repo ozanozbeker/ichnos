@@ -49,11 +49,26 @@ class KeyTable:
     keys: list[frozenset[str]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ForeignKey:
+    child: Name
+    columns: tuple[str, ...]
+    parent: Name
+    references: tuple[str, ...]
+
+    def pairs(self) -> frozenset[tuple[tuple[Name, str], tuple[Name, str]]]:
+        return frozenset(
+            ((self.child, c), (self.parent, r))
+            for c, r in zip(self.columns, self.references, strict=True)
+        )
+
+
 @dataclass
 class AnswerKey:
     tables: dict[Name, KeyTable]
     synonyms: dict[str, Name]
     links: set[str]
+    foreign_keys: list[ForeignKey] = field(default_factory=list)
 
     def resolve(self, owner: str | None, name: str) -> Name | None:
         """Return the answer key table that a claimed name refers to, through synonyms and database links."""
@@ -160,7 +175,19 @@ def load() -> AnswerKey:
         m[1].upper(): (m[2].upper(), m[3].upper()) for m in _SYNONYM.finditer(text)
     }
     links = {m[1].upper() for m in _LINK.finditer(text)}
-    return AnswerKey(tables, synonyms, links)
+    foreign_keys = [
+        ForeignKey(
+            (_name(alter.this.args["db"]), _name(alter.this.this)),
+            tuple(_name(i) for i in fk.expressions),
+            (_name(ref.this.args["db"]), _name(ref.this.this)),
+            tuple(_name(i) for i in ref.expressions),
+        )
+        for alter in sqlglot.parse(text, read="oracle")
+        if isinstance(alter, exp.Alter)
+        for fk in alter.find_all(exp.ForeignKey)
+        for ref in [fk.args["reference"].this]
+    ]
+    return AnswerKey(tables, synonyms, links, foreign_keys)
 
 
 def lineage_rows() -> list[dict[str, str]]:
@@ -214,6 +241,7 @@ def score_schema(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
     yield from _score_kinds(graph, key)
     yield from _score_types(graph, key)
     yield from _score_keys(graph, key)
+    yield from _score_relationships(graph, key)
     yield from _score_ambiguities(graph, key, claimed)
     shown_tables, shown_columns = shown(key)
     for name in sorted(shown_tables - {t for t, c in claimed if not c}):
@@ -302,6 +330,70 @@ def _score_keys(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
                 yield Deviation(
                     "key", f"{dbml_name(*name)}({', '.join(ordered)})", "miss"
                 )
+
+
+def _score_relationships(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
+    """Yield each relationship that matches no foreign key, each shared reference that does not hold, and each missed foreign key."""
+    claimed: set[ForeignKey] = set()
+    for relationship in graph.relationships:
+        sides = [_resolve_side(side, key) for side in relationship.sides]
+        subject = _relationship_subject(relationship)
+        found = next(
+            (
+                fk
+                for fk in key.foreign_keys
+                if None not in sides and _holds(relationship, sides, fk)
+            ),
+            None,
+        )
+        if found is None:
+            yield Deviation("relationship", subject, "extra")
+        else:
+            claimed.add(found)
+        if relationship.shared is not None:
+            target = _resolve_side(relationship.shared.columns, key)
+            refers = [
+                any(_pairs(s, target) == fk.pairs() for fk in key.foreign_keys)
+                for s in sides
+            ]
+            if not all(refers):
+                yield Deviation("shared reference", subject, "extra")
+    for fk in key.foreign_keys:
+        if fk not in claimed:
+            child = f"{dbml_name(*fk.child)}({', '.join(fk.columns)})"
+            parent = f"{dbml_name(*fk.parent)}({', '.join(fk.references)})"
+            yield Deviation("relationship", f"{child} > {parent}", "miss")
+
+
+type ResolvedSide = tuple[tuple[Name, str], ...] | None
+
+
+def _resolve_side(columns: tuple[ichnos.Column, ...], key: AnswerKey) -> ResolvedSide:
+    table = key.resolve(columns[0].table.owner, columns[0].table.name)
+    return None if table is None else tuple((table, c.name) for c in columns)
+
+
+def _pairs(
+    side: ResolvedSide, other: ResolvedSide
+) -> frozenset[tuple[tuple[Name, str], tuple[Name, str]]]:
+    return frozenset(zip(side or (), other or (), strict=False))
+
+
+def _holds(
+    relationship: ichnos.Relationship, sides: list[ResolvedSide], fk: ForeignKey
+) -> bool:
+    """Return whether a relationship's columns equal a foreign key's, with the referring side first when it has a direction."""
+    forward = _pairs(sides[0], sides[1]) == fk.pairs()
+    backward = _pairs(sides[1], sides[0]) == fk.pairs()
+    return forward or (backward and relationship.direction is None)
+
+
+def _relationship_subject(relationship: ichnos.Relationship) -> str:
+    names = [
+        f"{dbml_name(s[0].table.owner, s[0].table.name)}({', '.join(c.name for c in s)})"
+        for s in relationship.sides
+    ]
+    return f" {'>' if relationship.direction else '<>'} ".join(names)
 
 
 def _score_ambiguities(

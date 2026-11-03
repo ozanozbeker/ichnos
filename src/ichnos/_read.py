@@ -124,6 +124,19 @@ class Creation:
 
 
 @dataclass(frozen=True, slots=True)
+class Join:
+    """Every bare `=` between two table references of one query, which together give one relationship (ADR 0002).
+
+    A `NATURAL JOIN` holds no columns, because only declarations can name them (ADR 0008).
+    """
+
+    left: TableKey
+    right: TableKey
+    columns: tuple[tuple[str, str], ...]
+    natural: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class Trace:
     """What one query shows about the tables it reads and writes."""
 
@@ -133,6 +146,7 @@ class Trace:
     creation: Creation | None
     refs: tuple[ColumnRef, ...]
     keys: tuple[KeyEvidence, ...]
+    joins: tuple[Join, ...]
 
 
 def split(text: str) -> list[str]:
@@ -265,6 +279,11 @@ class _Walker:
         # What a bare column learns from its parent expression, keyed by the column node's id.
         self.facts: dict[int, Fact] = {}
         self.keys: list[KeyEvidence] = []
+        # The equalities between each pair of table references, keyed by the two sources' ids.
+        self.pairs: dict[
+            tuple[int, int], tuple[_TableSource, _TableSource, list[tuple[str, str]]]
+        ] = {}
+        self.naturals: list[Join] = []
 
     def result(self, statement: Statement) -> Trace:
         reads = frozenset(self.reads)
@@ -275,6 +294,13 @@ class _Walker:
             self.creation,
             tuple(self.refs),
             tuple(dict.fromkeys(self.keys)),
+            (
+                *(
+                    Join(a.key, b.key, tuple(dict.fromkeys(c)))
+                    for a, b, c in self.pairs.values()
+                ),
+                *self.naturals,
+            ),
         )
 
     # --- statements ---------------------------------------------------------------------------
@@ -323,6 +349,7 @@ class _Walker:
         target = self._target(scope, tree.this)
         source = self._add_source(scope, tree.args["using"], {})
         self.expression(tree.args["on"], scope, "join")
+        self._equalities(tree.args["on"], scope)
         target_source = (
             _lookup(scope, target[0], target[1])
             if tree.this.alias == ""
@@ -499,6 +526,10 @@ class _Walker:
         if connect:
             self.expression(connect.args.get("start"), scope, "where")
             self.expression(connect.args["connect"], scope, "join")
+            self._equalities(connect.args["connect"], scope)
+        for join in node.args.get("joins") or ():
+            self._equalities(join.args.get("on"), scope)
+        self._equalities(where and where.this, scope)
         self.expression(node.args.get("order"), scope, "order_by")
         return _LocalSource(*_expand(node, scope))
 
@@ -507,6 +538,13 @@ class _Walker:
     ) -> None:
         before = list(scope.sources.values())
         source = self._add_source(scope, join.this, ctes)
+        natural = join.args.get("method") == "NATURAL" and len(before) == 1
+        if (
+            natural
+            and isinstance(before[0], _TableSource)
+            and isinstance(source, _TableSource)
+        ):
+            self.naturals.append(Join(before[0].key, source.key, (), natural=True))
         side = join.args.get("side")
         for optional in [
             *(before if side in {"RIGHT", "FULL"} else ()),
@@ -521,6 +559,10 @@ class _Walker:
             self._emit(name, source, "join")
             if len(left) == 1:
                 self._emit(name, left[0], "join")
+                if isinstance(left[0], _TableSource) and isinstance(
+                    source, _TableSource
+                ):
+                    self._pair(left[0], source, name, name)
             else:
                 tables = tuple(s.key for s in left if isinstance(s, _TableSource))
                 self.refs.append(ColumnRef(name, (tables,), "join"))
@@ -581,6 +623,44 @@ class _Walker:
                     self.facts[id(column)] = fact
                 for child in node.iter_expressions():
                     self.expression(child, scope, position)
+
+    def _equalities(self, clause: exp.Expr | None, scope: _Scope) -> None:
+        """Record each AND-connected bare `=` between columns of two table references (ADR 0002)."""
+        for conjunct in _conjuncts(clause) if clause is not None else ():
+            if not isinstance(conjunct, exp.EQ):
+                continue
+            sides = [_unparen(conjunct.this), _unparen(conjunct.expression)]
+            # `CONNECT BY PRIOR a = b` compares a column of one row with a column of another row.
+            prior = any(isinstance(s, exp.Prior) for s in sides)
+            a, b = (_bare(s.this if isinstance(s, exp.Prior) else s) for s in sides)
+            if a is None or b is None:
+                continue
+            left, right = self._resolve(a, scope), self._resolve(b, scope)
+            if not (isinstance(left, _TableSource) and isinstance(right, _TableSource)):
+                continue
+            if left is not right or prior:
+                self._pair(left, right, _name(a.this), _name(b.this))
+
+    def _resolve(self, column: exp.Column, scope: _Scope) -> _Source | None:
+        """Return the one source that a column belongs to, or None when the query alone cannot tell."""
+        qualifier = column.args.get("table")
+        if qualifier is not None:
+            owner = column.args.get("db")
+            return _lookup(scope, _name(owner) if owner else None, _name(qualifier))
+        current: _Scope | None = scope
+        name = _name(column.this)
+        while current is not None:
+            holders = [s for s in current.sources.values() if _holds(s, name)]
+            if holders:
+                return holders[0] if len(holders) == 1 else None
+            current = current.parent
+        return None
+
+    def _pair(self, left: _TableSource, right: _TableSource, a: str, b: str) -> None:
+        if (id(right), id(left)) in self.pairs and left is not right:
+            left, right, a, b = right, left, b, a
+        entry = self.pairs.setdefault((id(left), id(right)), (left, right, []))
+        entry[2].append((a, b))
 
     def _single_row(self, node: exp.Expr, scope: _Scope) -> None:
         """Record the key that a single-row subquery shows, because Oracle raises ORA-01427 when it returns two rows."""
