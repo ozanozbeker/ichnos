@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-import answer_key
 import pytest
+from conftest import dependency_lines
 
 import ichnos
 
@@ -14,48 +14,38 @@ if TYPE_CHECKING:
     from conftest import DbmlChecker
     from syrupy.assertion import SnapshotAssertion
 
-GRAPH = ichnos.read(answer_key.QUERIES)
+
+def _upstream(graph: ichnos.Graph) -> ichnos.Slice:
+    return graph.upstream(graph.report("054_segment_summary"))
 
 
-def _upstream() -> ichnos.Slice:
-    return GRAPH.upstream(GRAPH.report("054_segment_summary"))
+def _downstream(graph: ichnos.Graph) -> ichnos.Slice:
+    return graph.downstream(graph.table("sales.order_lines").column("quantity"))
 
 
-def _downstream() -> ichnos.Slice:
-    return GRAPH.downstream(GRAPH.table("sales.order_lines").column("quantity"))
+def test_the_upstream_slice_matches_its_golden_file(
+    synthetic: ichnos.Graph, snapshot_dbml: SnapshotAssertion
+):
+    # The budget runs through every cut step (ADR 0015).
+    text = ichnos.dbml(_upstream(synthetic), budget=2850, examples=True)
+    assert text == snapshot_dbml
 
 
-def _deps(found: ichnos.Slice) -> set[str]:
-    def name(
-        end: ichnos.Table | ichnos.Column | ichnos.Report | ichnos.OutputColumn,
-    ) -> str:
-        match end:
-            case ichnos.Column():
-                return f"{end.table.name}.{end.name}"
-            case ichnos.OutputColumn():
-                return f"{end.report.name}.{end.name}"
-            case _:
-                return end.name
-
-    return {
-        f"{name(d.upstream)} -> {name(d.downstream)} {','.join(d.subtypes)}"
-        for d in found.dependencies
-    }
-
-
-def test_the_upstream_slice_matches_its_golden_file(snapshot_dbml: SnapshotAssertion):
-    assert ichnos.dbml(_upstream(), examples=True) == snapshot_dbml
-
-
-def test_the_downstream_slice_matches_its_golden_file(snapshot_dbml: SnapshotAssertion):
-    assert ichnos.dbml(_downstream(), examples=True) == snapshot_dbml
+def test_the_downstream_slice_matches_its_golden_file(
+    synthetic: ichnos.Graph, snapshot_dbml: SnapshotAssertion
+):
+    # The budget runs through every cut step (ADR 0015).
+    text = ichnos.dbml(_downstream(synthetic), budget=5050, examples=True)
+    assert text == snapshot_dbml
 
 
 @pytest.mark.parametrize("walk", [_upstream, _downstream])
 def test_the_budget_cuts_one_step_at_a_time_down_to_the_chain(
-    dbml_checker: DbmlChecker, walk: Callable[[], ichnos.Slice]
+    synthetic: ichnos.Graph,
+    dbml_checker: DbmlChecker,
+    walk: Callable[[ichnos.Graph], ichnos.Slice],
 ):
-    found = walk()
+    found = walk(synthetic)
     text = ichnos.dbml(found, examples=True)
     previous: list[str] = []
     while "The core is" not in text:
@@ -71,20 +61,28 @@ def test_the_budget_cuts_one_step_at_a_time_down_to_the_chain(
     assert "the first hop's indirect dependencies" in previous[-1]
 
 
-def test_a_count_star_ends_the_walk_at_the_table_it_reads():
-    found = GRAPH.upstream(
-        GRAPH.report("054_segment_summary").output_column("customer_count")
+def test_a_count_star_ends_the_walk_at_the_table_it_reads(synthetic: ichnos.Graph):
+    found = synthetic.upstream(
+        synthetic.report("054_segment_summary").output_column("customer_count")
     )
-    assert _deps(found) == {
-        "CUSTOMER_SEGMENTS -> 054_segment_summary.CUSTOMER_COUNT AGGREGATION",
-        "CUSTOMER_SEGMENTS.SEGMENT -> 054_segment_summary GROUP_BY",
-        "CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> 054_segment_summary SORT",
+    assert dependency_lines(found.dependencies) == {
+        "CUSTOMER_SEGMENTS -> report 054_segment_summary.CUSTOMER_COUNT AGGREGATION",
+        "CUSTOMER_SEGMENTS.SEGMENT -> report 054_segment_summary GROUP_BY",
+        "CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> report 054_segment_summary SORT",
     }
 
 
-def test_indirect_dependencies_stay_on_the_first_hop_unless_all_are_asked_for():
-    first = _deps(GRAPH.upstream(GRAPH.table("mart.customer_segments")))
-    every = _deps(GRAPH.upstream(GRAPH.table("mart.customer_segments"), indirect="all"))
+def test_indirect_dependencies_stay_on_the_first_hop_unless_all_are_asked_for(
+    synthetic: ichnos.Graph,
+):
+    first = dependency_lines(
+        synthetic.upstream(synthetic.table("mart.customer_segments")).dependencies
+    )
+    every = dependency_lines(
+        synthetic.upstream(
+            synthetic.table("mart.customer_segments"), indirect="all"
+        ).dependencies
+    )
     assert "CUSTOMER_DAILY_SALES.SALES_DATE -> CUSTOMER_SEGMENTS FILTER" in first
     deeper = "ORDER_LINE_FACTS.SALES_DATE -> CUSTOMER_DAILY_SALES JOIN,FILTER,GROUP_BY"
     assert deeper not in first
@@ -103,7 +101,10 @@ def test_a_dependency_past_the_first_hop_keeps_only_its_direct_subtypes():
         }
     )
     found = graph.upstream(graph.table("m.c"))
-    assert _deps(found) == {"B.Y -> C.Z IDENTITY", "A.X -> B.Y IDENTITY"}
+    assert dependency_lines(found.dependencies) == {
+        "B.Y -> C.Z IDENTITY",
+        "A.X -> B.Y IDENTITY",
+    }
 
 
 def test_a_cycle_ends_the_walk():
@@ -113,14 +114,16 @@ def test_a_cycle_ends_the_walk():
             "b": "INSERT INTO s.b (y) SELECT a.x FROM s.a a",
         }
     )
-    assert _deps(graph.upstream(graph.table("s.a").column("x"))) == {
+    assert dependency_lines(
+        graph.upstream(graph.table("s.a").column("x")).dependencies
+    ) == {
         "B.Y -> A.X IDENTITY",
         "A.X -> B.Y IDENTITY",
     }
 
 
-def test_a_downstream_slice_of_a_table_writes_rollups_only():
-    found = GRAPH.downstream(GRAPH.table("mart.customer_segments"))
+def test_a_downstream_slice_of_a_table_writes_rollups_only(synthetic: ichnos.Graph):
+    found = synthetic.downstream(synthetic.table("mart.customer_segments"))
     assert found.dependencies == ()
     assert {(r.upstream.name, r.downstream.name) for r in found.rollups} == {
         ("CUSTOMER_SEGMENTS", "CUSTOMER_SEGMENTS"),
@@ -139,9 +142,11 @@ def test_a_downstream_slice_of_a_table_writes_rollups_only():
     )
 
 
-def test_a_lineage_slice_writes_a_self_dependency_as_a_property():
+def test_a_lineage_slice_writes_a_self_dependency_as_a_property(
+    synthetic: ichnos.Graph,
+):
     text = ichnos.dbml(
-        GRAPH.upstream(GRAPH.table("mart.customer_segments").column("segment"))
+        synthetic.upstream(synthetic.table("mart.customer_segments").column("segment"))
     )
     assert (
         "Metadata Column MART.CUSTOMER_SEGMENTS.SEGMENT {\n  self_dependency: 'TRANSFORMATION 1'\n}"
@@ -159,3 +164,13 @@ def test_dropping_the_first_hop_keeps_the_direct_subtypes_of_a_mixed_dependency(
     assert "the first hop's indirect dependencies" in text
     assert "Dep: S.U.K -> S.T [identity: 1]" in text
     assert "S.T.K" not in text
+
+
+def test_a_downstream_slice_of_a_table_ends_with_the_queries_of_its_rollups(
+    synthetic: ichnos.Graph,
+):
+    found = synthetic.downstream(synthetic.table("mart.customer_segments"))
+    names = {q.name for r in found.rollups for q in r.queries}
+    text = ichnos.dbml(found, budget=100_000, examples=True)
+    assert names
+    assert set(re.findall(r"(?m)^// (\S+)$", text)) == names

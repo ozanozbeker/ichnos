@@ -38,6 +38,14 @@ type Output = Annotated[Path | None, cyclopts.Parameter(name=["--output", "-o"])
 type Budget = Annotated[
     int, cyclopts.Parameter(validator=cyclopts.validators.Number(gt=0))
 ]
+
+
+def _two_or_more(_: object, tables: tuple[str, ...]) -> None:
+    if len(tables) < 2:  # noqa: PLR2004 # a join path joins two tables at least (ADR 0014)
+        message = "Requires two or more tables."
+        raise ValueError(message)
+
+
 type Suffix = Annotated[
     tuple[str, ...],
     cyclopts.Parameter(name="--suffix", negative="", consume_multiple=False),
@@ -58,7 +66,7 @@ def _command[**P](function: Callable[P, None]) -> Callable[P, None]:
     return run
 
 
-def _graph(corpus: Path, suffix: tuple[str, ...], encoding: str) -> Graph:
+def _graph(corpus: str, suffix: tuple[str, ...], encoding: str) -> Graph:
     try:
         return read(corpus, suffix, encoding)
     except OSError as error:
@@ -66,7 +74,7 @@ def _graph(corpus: Path, suffix: tuple[str, ...], encoding: str) -> Graph:
         raise IchnosError(message) from None
 
 
-def _note_unparsed(graph: Graph, corpus: Path) -> None:
+def _note_unparsed(graph: Graph, corpus: str) -> None:
     """Write one stderr line when any query is unparsed, so a slice stays clean to paste."""
     if graph.unparsed:
         total = len(graph.queries) + len(graph.unparsed)
@@ -123,7 +131,7 @@ def _write(text: str, output: Path | None) -> None:
 @app.command
 @_command
 def dbml(
-    corpus: Path,
+    corpus: str,
     /,
     *,
     output: Output = None,
@@ -151,7 +159,7 @@ def dbml(
 @app.command
 @_command
 def summary(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
-    corpus: Path,
+    corpus: str,
     /,
     *,
     owner: str | None = None,
@@ -188,7 +196,7 @@ def summary(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
 @app.command
 @_command
 def neighborhood(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
-    corpus: Path,
+    corpus: str,
     tables: Annotated[tuple[str, ...], cyclopts.Parameter(consume_multiple=True)],
     /,
     *,
@@ -234,8 +242,11 @@ def neighborhood(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
 @app.command(name="join-path")
 @_command
 def join_path(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
-    corpus: Path,
-    tables: Annotated[tuple[str, ...], cyclopts.Parameter(consume_multiple=True)],
+    corpus: str,
+    tables: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(consume_multiple=True, validator=_two_or_more),
+    ],
     /,
     *,
     budget: Budget = BUDGET,
@@ -282,7 +293,7 @@ _START = cyclopts.Group(
 @app.command
 @_command
 def upstream(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
-    corpus: Path,
+    corpus: str,
     /,
     *,
     table: Annotated[str | None, cyclopts.Parameter(group=_START)] = None,
@@ -342,7 +353,7 @@ def upstream(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
 @app.command
 @_command
 def downstream(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
-    corpus: Path,
+    corpus: str,
     /,
     *,
     table: str,
@@ -399,7 +410,7 @@ def _start(graph: Graph, table: str, column: str | None) -> Table | Column:
 @app.command
 @_command
 def unparsed(
-    corpus: Path,
+    corpus: str,
     /,
     *,
     output: Output = None,

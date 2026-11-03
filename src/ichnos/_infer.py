@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ichnos._read import (
         ColumnRef,
         Creation,
+        Equality,
         Item,
         KeyShape,
         Position,
@@ -27,6 +28,18 @@ if TYPE_CHECKING:
     )
 
 type ContradictionReason = Literal["undeclared column", "declaration", "value count"]
+"""How a query shows that a declaration no longer describes its table (ADR 0008).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.ContradictionReason.__value__)
+```
+"""
 type Contradicting = tuple[int, ContradictionReason, str | None]
 
 
@@ -230,6 +243,7 @@ def _relationships(
 ) -> dict[tuple[Side, Side], set[int]]:
     found: defaultdict[tuple[Side, Side], set[int]] = defaultdict(set)
     for index, trace in enumerate(traces):
+        settled = _settled(trace.equalities, declarations)
         for join in trace.joins:
             columns = join.columns
             if join.natural:
@@ -237,9 +251,40 @@ def _relationships(
                 left = declarations.columns(join.left) or ()
                 right = declarations.columns(join.right) or ()
                 columns = tuple((n, n) for n in left if n in right)
+            # A settled equality between the same two tables joins the same relationship.
+            columns = (
+                *columns,
+                *settled.pop((join.left, join.right), ()),
+                *((b, a) for a, b in settled.pop((join.right, join.left), ())),
+            )
             if columns:
                 found[relationship(join.left, join.right, columns)].add(index)
+        for (left, right), columns in settled.items():
+            found[relationship(left, right, columns)].add(index)
     return dict(found)
+
+
+def _settled(
+    equalities: Iterable[Equality], declarations: Declarations
+) -> dict[tuple[TableKey, TableKey], list[tuple[str, str]]]:
+    """Return the column pairs of each equality whose sides the declarations settle, keyed by the two tables in name order."""
+    settled: defaultdict[tuple[TableKey, TableKey], list[tuple[str, str]]] = (
+        defaultdict(list)
+    )
+    for equality in equalities:
+        left, right = (
+            declarations.settle(equality.left),
+            declarations.settle(equality.right),
+        )
+        # Two sides on one table can be one table reference, which gives no relationship (ADR 0002).
+        if len(left) != 1 or len(right) != 1 or left == right:
+            continue
+        pair = (equality.left.name, equality.right.name)
+        if (right[0][0] or "", right[0][1]) < (left[0][0] or "", left[0][1]):
+            settled[right[0], left[0]].append((pair[1], pair[0]))
+        else:
+            settled[left[0], right[0]].append(pair)
+    return dict(settled)
 
 
 class Declarations:

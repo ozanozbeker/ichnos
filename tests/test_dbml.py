@@ -1,7 +1,5 @@
 from typing import TYPE_CHECKING
 
-import answer_key
-
 import ichnos
 
 if TYPE_CHECKING:
@@ -11,8 +9,10 @@ if TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
 
-def test_the_synthetic_corpus_matches_its_golden_file(snapshot_dbml: SnapshotAssertion):
-    assert ichnos.dbml(ichnos.read(answer_key.QUERIES)) == snapshot_dbml
+def test_the_synthetic_corpus_matches_its_golden_file(
+    synthetic: ichnos.Graph, snapshot_dbml: SnapshotAssertion
+):
+    assert ichnos.dbml(synthetic) == snapshot_dbml
 
 
 def test_a_table_with_no_known_column_takes_a_placeholder(

@@ -81,11 +81,12 @@ The upstream column's type comes from other queries, and one wrong type would pa
 
 ## Tracing
 
-ichnos traces lineage itself over sqlglot's `optimizer.scope`, and never calls `sqlglot.lineage`.
+ichnos traces lineage with its own walk over each query's scopes, and calls neither `sqlglot.lineage` nor `optimizer.scope`.
 `lineage()` collects columns inside the projection only ([lineage.py L367-L368](https://github.com/tobymao/sqlglot/blob/v30.26.0/sqlglot/lineage.py#L367-L368)), lists a `CASE` condition as an ordinary upstream, and gives `COUNT(*)` no upstream.
 It raises on 022, returns an inner `SELECT` for 023 to 026, and guesses the whole inner `SELECT` when its single-source rule misses ([L249](https://github.com/tobymao/sqlglot/blob/v30.26.0/sqlglot/lineage.py#L249)).
 sqlglot 30.26.0's `traverse_scope` gives no scope for the statement level of an `UPDATE` or `MERGE` (run on 2026-11-03).
-024's `SET` and `WHERE` columns, 048's `ON` and `WHEN` columns and every column of 051 are in no scope, so ichnos walks that level itself with either engine.
+024's `SET` and `WHERE` columns, 048's `ON` and `WHEN` columns and every column of 051 are in no scope, so ichnos would walk that level itself with either engine.
+One walk for every statement keeps one set of name-resolution rules, so ichnos never calls `traverse_scope`.
 
 The private parser module ([ADR 0004](0004-sqlglot-is-the-only-parser.md)) returns a trace per query, with no declaration applied.
 The trace holds:

@@ -1,25 +1,6 @@
+from conftest import dependency_lines, end_name
+
 import ichnos
-
-
-def _name(
-    end: ichnos.Table | ichnos.Column | ichnos.Report | ichnos.OutputColumn,
-) -> str:
-    match end:
-        case ichnos.Table():
-            return end.name
-        case ichnos.Column():
-            return f"{end.table.name}.{end.name}"
-        case ichnos.Report():
-            return f"report {end.name}"
-        case ichnos.OutputColumn():
-            return f"report {end.report.name}.{end.name}"
-
-
-def _deps(graph: ichnos.Graph) -> set[str]:
-    return {
-        f"{_name(d.upstream)} -> {_name(d.downstream)} {','.join(d.subtypes)}"
-        for d in graph.dependencies
-    }
 
 
 def test_a_report_depends_on_each_column_its_values_compute_from():
@@ -28,7 +9,7 @@ def test_a_report_depends_on_each_column_its_values_compute_from():
             "r": "SELECT o.id, o.qty * o.price AS total, SUM(o.qty) AS units FROM s.orders o GROUP BY o.id",
         }
     )
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "ORDERS.ID -> report r.ID IDENTITY",
         "ORDERS.QTY -> report r.TOTAL TRANSFORMATION",
         "ORDERS.PRICE -> report r.TOTAL TRANSFORMATION",
@@ -36,7 +17,11 @@ def test_a_report_depends_on_each_column_its_values_compute_from():
         "ORDERS.ID -> report r GROUP_BY",
     }
     [rollup] = graph.rollups
-    assert (_name(rollup.upstream), _name(rollup.downstream), len(rollup.queries)) == (
+    assert (
+        end_name(rollup.upstream),
+        end_name(rollup.downstream),
+        len(rollup.queries),
+    ) == (
         "ORDERS",
         "report r",
         1,
@@ -49,7 +34,7 @@ def test_a_path_through_a_local_relation_takes_its_first_direct_subtype():
             "r": "WITH c AS (SELECT SUM(o.qty) AS n, o.id FROM s.orders o GROUP BY o.id) SELECT c.n + 1 AS m, c.id FROM c",
         }
     )
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "ORDERS.QTY -> report r.M AGGREGATION",
         "ORDERS.ID -> report r.ID IDENTITY",
         "ORDERS.ID -> report r GROUP_BY",
@@ -58,12 +43,18 @@ def test_a_path_through_a_local_relation_takes_its_first_direct_subtype():
 
 def test_an_insert_with_no_column_list_into_an_undeclared_table_depends_on_the_table():
     graph = ichnos.infer({"i": "INSERT INTO s.t SELECT u.a, u.b + 1 FROM s.u u"})
-    assert _deps(graph) == {"U.A -> T IDENTITY", "U.B -> T TRANSFORMATION"}
+    assert dependency_lines(graph.dependencies) == {
+        "U.A -> T IDENTITY",
+        "U.B -> T TRANSFORMATION",
+    }
 
 
 def test_an_insert_with_a_column_list_maps_each_value():
     graph = ichnos.infer({"i": "INSERT INTO s.t (x, y) SELECT u.a, u.b FROM s.u u"})
-    assert _deps(graph) == {"U.A -> T.X IDENTITY", "U.B -> T.Y IDENTITY"}
+    assert dependency_lines(graph.dependencies) == {
+        "U.A -> T.X IDENTITY",
+        "U.B -> T.Y IDENTITY",
+    }
 
 
 def test_an_unexpanded_star_gives_a_table_level_dependency():
@@ -73,7 +64,7 @@ def test_an_unexpanded_star_gives_a_table_level_dependency():
             "r": "SELECT u.*, u.k FROM s.u u",
         }
     )
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "U -> V IDENTITY",
         "U -> report r IDENTITY",
         "U.K -> report r.K IDENTITY",
@@ -90,7 +81,9 @@ def test_a_star_that_a_declaration_expands_depends_on_each_column():
             "r": "SELECT * FROM m.t",
         }
     )
-    assert {d for d in _deps(graph) if not d.startswith("SRC")} == {
+    assert {
+        d for d in dependency_lines(graph.dependencies) if not d.startswith("SRC")
+    } == {
         "T.A -> V.A IDENTITY",
         "T.B -> V.B IDENTITY",
         "T.A -> T.A IDENTITY",
@@ -107,7 +100,10 @@ def test_a_cycle_through_two_tables_keeps_both_dependencies():
             "b": "INSERT INTO s.b (y) SELECT a.x FROM s.a a",
         }
     )
-    assert _deps(graph) == {"B.Y -> A.X IDENTITY", "A.X -> B.Y IDENTITY"}
+    assert dependency_lines(graph.dependencies) == {
+        "B.Y -> A.X IDENTITY",
+        "A.X -> B.Y IDENTITY",
+    }
 
 
 def test_a_self_dependency_is_a_column_property():
@@ -153,7 +149,7 @@ def test_a_clause_gives_an_indirect_dependency_on_the_downstream_end():
                  WHERE o.status = 'A' GROUP BY o.id, o.total, o.region, o.day ORDER BY o.id""",
         }
     )
-    assert {d for d in _deps(graph) if "->" in d} >= {
+    assert {d for d in dependency_lines(graph.dependencies) if "->" in d} >= {
         "ORDERS.TOTAL -> report r.BAND CONDITIONAL",
         "ORDERS.REGION -> report r.RN WINDOW",
         "ORDERS.DAY -> report r.RN WINDOW",
@@ -164,7 +160,7 @@ def test_a_clause_gives_an_indirect_dependency_on_the_downstream_end():
     [dependency] = [
         d
         for d in graph.dependencies
-        if _name(d.downstream) == "report r" and _name(d.upstream) == "ORDERS.ID"
+        if end_name(d.downstream) == "report r" and end_name(d.upstream) == "ORDERS.ID"
     ]
     assert (dependency.direct, dependency.indirect) == (False, True)
 
@@ -175,7 +171,7 @@ def test_count_of_a_star_or_a_literal_reads_whole_rows():
             "r": "SELECT COUNT(*) AS n, COUNT(1) AS m, COUNT(DISTINCT o.id) AS k FROM s.orders o HAVING COUNT(*) > 1",
         }
     )
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "ORDERS -> report r.N AGGREGATION",
         "ORDERS -> report r.M AGGREGATION",
         "ORDERS.ID -> report r.K AGGREGATION",
@@ -188,7 +184,7 @@ def test_count_over_a_window_reads_whole_rows_and_its_window_columns():
     graph = ichnos.infer(
         {"r": "SELECT COUNT(*) OVER (PARTITION BY o.region) AS n FROM s.orders o"}
     )
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "ORDERS -> report r.N AGGREGATION",
         "ORDERS.REGION -> report r.N WINDOW",
     }
@@ -200,7 +196,7 @@ def test_an_insert_all_when_condition_filters_its_into_target():
             "i": "INSERT ALL WHEN k > 1 THEN INTO s.big (x) VALUES (v) INTO s.every (x) VALUES (v) SELECT u.k, u.v FROM s.u u",
         }
     )
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "U.K -> BIG FILTER",
         "U.V -> BIG.X IDENTITY",
         "U.V -> EVERY.X IDENTITY",
@@ -211,7 +207,7 @@ def test_every_minus_branch_after_the_first_filters_the_rows():
     graph = ichnos.infer(
         {"r": "SELECT a.x FROM s.a a MINUS SELECT b.y FROM s.b b WHERE b.z = 1"}
     )
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "A.X -> report r.X IDENTITY",
         "B.Y -> report r FILTER",
         "B.Z -> report r FILTER",
@@ -233,7 +229,7 @@ def test_merge_and_update_clauses_select_the_written_rows():
         }
     )
     # The INSERT has no column list and T no declaration, so its values depend on the table.
-    assert _deps(graph) == {
+    assert dependency_lines(graph.dependencies) == {
         "T.K -> T JOIN",
         "U.K -> T IDENTITY,JOIN",
         "U.V -> T IDENTITY",

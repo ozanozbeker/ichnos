@@ -41,7 +41,8 @@ The records mirror the properties of [ADR 0011](0011-dbml-evidence-as-custom-pro
 
 - `Table` holds `owner`, `name`, `columns`, `keys`, its `read`, `write` and `declared` evidence, `declarations`, `kind`, `complete`, `contradictions` and `ambiguities`.
   `columns` follows ADR 0011's order: declared order, then undeclared columns by name.
-- `Declaration(kind, columns, queries)` is one distinct declaration, with `columns` in declared order.
+- `Declaration(kind, columns, types, queries)` is one distinct declaration, with `columns` in declared order.
+  `types` maps each declared column whose expression has a fixed type to that `Type` ([ADR 0007](0007-types-from-fixed-type-expressions-and-nullable-only.md)).
   Two matching creating queries give one `Declaration` with two queries ([ADR 0008](0008-declarations-settle-ambiguities-until-contradicted.md)).
 - `Table.kind` is a `TableKind` or `None`.
   It is `None` with no declaration, or when the declarations differ in kind, which an ambiguity records.
@@ -53,13 +54,14 @@ The records mirror the properties of [ADR 0011](0011-dbml-evidence-as-custom-pro
 - `Key` holds `columns`, `name_match` (the pattern, or `None`) and its evidence by shape ([ADR 0006](0006-keys-from-name-matches-and-four-query-shapes.md)).
 - `Relationship` holds two column tuples, `direction`, `shared` and its `join` evidence.
   `direction` is the `Key` that the first side refers to, or `None`, and with `None` the sides go in name order.
-  `shared` is the third table's key column for a shared reference ([ADR 0002](0002-relationships-from-bare-equality-direction-from-key.md)).
-- `Report` holds `name`, `query` and `output_columns`, and `OutputColumn` holds `name`, `position` and `types`.
+  `shared` is the third table's `Key` for a shared reference ([ADR 0002](0002-relationships-from-bare-equality-direction-from-key.md)).
+- `Report` holds `name`, `query`, `output_columns` and `ambiguities`, and `OutputColumn` holds `name`, `position` and `types`.
 - `Dependency` holds `upstream`, `downstream` and `subtypes`, which maps each `Subtype` to its queries.
   `Subtype` takes OpenLineage's uppercase names, as `answer_key/lineage.csv` does ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)).
   `direct` and `indirect` say whether it holds any direct or any indirect subtype, and one dependency can hold both.
 - `Rollup` holds `upstream`, `downstream`, `queries` and the dependencies it rolls up.
-- `Ambiguity` holds `kind`, `query` and `candidates`, each candidate with its own evidence from other queries.
+- `Ambiguity` holds `kind`, `query`, `subject` and `candidates`, each candidate with its own evidence from other queries.
+  `subject` names what the ambiguity is about, such as a column, so the writer can name it without a lookup.
   `kind` is `"column"`, `"owner"`, `"declaration"`, `"type"` or `"dependency"`.
   `query` is `None` for `"declaration"` and `"type"`, which span queries.
   `graph.ambiguities` lists every one, and each table, column and output column that one touches lists it too.
@@ -85,7 +87,7 @@ Each walk takes records, never strings, and returns a `Slice` ([ADR 0012](0012-l
 - `graph.downstream(start, indirect="first_hop")`, where `start` is a `Table` or `Column`.
 
 A `Slice` holds what the writer needs and nothing the writer computes.
-It holds `kind`, `starts`, `depth`, `indirect`, the `distances` of each table and report from the start, the kept `columns` per table, `relationships`, `dependencies`, `rollups`, the `outside` names of ADR 0012's header, and the `unconnected` tables of a join path.
+It holds `kind`, `starts`, `depth`, `indirect`, the `distances` of each table and report from the start, the kept `columns` per table, `relationships`, `dependencies`, `rollups`, the `outside` names of ADR 0012's header, the `unconnected` tables of a join path, and the `graph` it comes from, whose totals the header states.
 The cut order lives in the writer, so a `Slice` never changes with the budget.
 
 ## Writers
@@ -110,7 +112,7 @@ So the CLI can tell a user error from a bug.
 
 - Functions: `infer`, `read`, `dbml` and `summary`.
 - Classes: `Graph`, `Slice`, `Query`, `UnparsedQuery`, `Table`, `Column`, `Key`, `Relationship`, `Report`, `OutputColumn`, `Dependency`, `Rollup`, `Declaration`, `Contradiction`, `Ambiguity` and `IchnosError`.
-- `Literal` aliases: `TableKind`, `Type`, `Position`, `KeyShape`, `Subtype`, `AmbiguityKind`, `ContradictionReason`, `SliceKind`, `Indirect` (`"first_hop"` or `"all"`) and `Detail` (`"compact"` or `"full"`).
+- `Literal` aliases: `TableKind`, `Type`, `Position`, `KeyShape`, `NameMatch`, `Subtype`, `AmbiguityKind`, `ContradictionReason`, `SliceKind`, `Indirect` (`"first_hop"` or `"all"`) and `Detail` (`"compact"` or `"full"`).
 
 The records are public for annotations and `isinstance`.
 Only `infer` and `read` build them.

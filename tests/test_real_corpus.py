@@ -62,11 +62,11 @@ def _commands(
 ) -> None:
     """Run each command once on the first start, and check its exit code and its stderr lines."""
     table = graph.tables[0]
-    name = f"{table.owner}.{table.name}" if table.owner else table.name
-    quoted = (
-        name
-        if re.fullmatch(r"[\w.$#@]+", name)
-        else ".".join(f'"{p}"' for p in name.split("."))
+    # An unquoted name folds to uppercase, so only an uppercase part stays bare.
+    quoted = ".".join(
+        p if re.fullmatch(r"[A-Z][A-Z0-9_$#]*", p) else f'"{p}"'
+        for p in (table.owner, table.name)
+        if p is not None
     )
     starts = [
         ["neighborhood", quoted],

@@ -67,6 +67,13 @@ def test_a_file_with_several_queries_numbers_its_reports():
     assert [r.name for r in graph.reports] == ["f#2"]
 
 
+def test_a_comment_after_the_last_query_adds_no_query():
+    graph = ichnos.infer(
+        {"f": "SELECT t.x FROM t;\n-- end of file\n", "g": "-- only a note"}
+    )
+    assert ([r.name for r in graph.reports], graph.unparsed) == (["f"], ())
+
+
 def test_an_output_column_with_a_fixed_type_takes_it():
     graph = ichnos.infer(
         {"r": "SELECT COUNT(*) AS n, 'x' AS label, o.id FROM s.orders o"}

@@ -17,18 +17,65 @@ from sqlglot.tokens import Token, TokenType
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-# sqlglot logs a warning for each `Command` it falls back to, which `trace` lists as unparsed instead.
-# A handler on its logger stops Python's last-resort handler printing the warning to stderr.
+# A handler stops Python printing sqlglot's warning for each `Command`, which `trace` lists as unparsed instead.
 logging.getLogger("sqlglot").addHandler(logging.NullHandler())
 
 type TableKey = tuple[str | None, str]
 type Position = Literal[
     "select", "where", "join", "group_by", "order_by", "aggregate", "insert", "set"
 ]
+"""Where in a query a column reference sits, which counts as its own evidence kind (ADR 0011).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.Position.__value__)
+```
+"""
 type Statement = Literal["select", "insert", "update", "merge", "delete", "create"]
 type TableKind = Literal["base table", "view", "materialized view"]
+"""The kind of table that a declaration states (ADR 0008).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.TableKind.__value__)
+```
+"""
 type Type = Literal["text", "number", "datetime", "interval"]
+"""A column's inferred type. ichnos never claims an Oracle data type such as `VARCHAR2(10)` (ADR 0007).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.Type.__value__)
+```
+"""
 type KeyShape = Literal["generated", "merge", "single_row", "grouped"]
+"""A query shape that gives key evidence (ADR 0006).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.KeyShape.__value__)
+```
+"""
 type Subtype = Literal[
     "IDENTITY",
     "TRANSFORMATION",
@@ -40,17 +87,29 @@ type Subtype = Literal[
     "WINDOW",
     "CONDITIONAL",
 ]
+"""OpenLineage's transformation subtype, which says how a dependency's downstream end uses its upstream end (ADR 0010).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.Subtype.__value__)
+```
+"""
 # The direct subtypes, from the one a path takes last to the one it takes first (ADR 0010).
-_DIRECT: dict[Subtype, int] = {"IDENTITY": 0, "TRANSFORMATION": 1, "AGGREGATION": 2}
+DIRECT: dict[Subtype, int] = {"IDENTITY": 0, "TRANSFORMATION": 1, "AGGREGATION": 2}
 
 
-def combine(outer: Subtype, inner: Subtype) -> Subtype:
+def path_subtype(outer: Subtype, inner: Subtype) -> Subtype:
     """Return the subtype of a path: its outermost indirect step, or else the first of AGGREGATION, TRANSFORMATION and IDENTITY on it."""
-    if outer not in _DIRECT:
+    if outer not in DIRECT:
         return outer
-    if inner not in _DIRECT:
+    if inner not in DIRECT:
         return inner
-    return max(outer, inner, key=_DIRECT.__getitem__)
+    return max(outer, inner, key=DIRECT.__getitem__)
 
 
 type Item = str | TableKey
@@ -138,11 +197,11 @@ class Whole:
 
 
 type Upstream = ColumnRef | Whole
-type Dep = tuple[Upstream, Subtype]
+type Step = tuple[Upstream, Subtype]
 
 
 @dataclass(frozen=True, slots=True)
-class Flow:
+class Derivation:
     """One dependency that one query shows, before the declarations map its ends (ADR 0010).
 
     `table` is the written table, or None for a report. `column` names a written column,
@@ -192,6 +251,14 @@ class Join:
 
 
 @dataclass(frozen=True, slots=True)
+class Equality:
+    """A bare `=` with a side that several tables can hold, which gives a relationship once the declarations settle it (ADR 0008)."""
+
+    left: ColumnRef
+    right: ColumnRef
+
+
+@dataclass(frozen=True, slots=True)
 class Trace:
     """What one query shows about the tables it reads and writes."""
 
@@ -204,7 +271,8 @@ class Trace:
     joins: tuple[Join, ...]
     # A `SELECT` statement's output: each position's name, or a table whose `*` it cannot expand, and its value.
     outputs: tuple[tuple[Item, Value], ...] = ()
-    flows: tuple[Flow, ...] = ()
+    derivations: tuple[Derivation, ...] = ()
+    equalities: tuple[Equality, ...] = ()
 
 
 def split(text: str) -> list[str]:
@@ -213,7 +281,7 @@ def split(text: str) -> list[str]:
         tokens = sqlglot.Dialect.get_or_raise("oracle").tokenize(text)
     except SqlglotError:
         # Text that does not tokenize stays one query, which `trace` lists as unparsed.
-        tokens: list[Token] = []
+        return [text.strip()] if text.strip() else []
     cuts = [(t.start, t.end + 1) for t in tokens if t.token_type == TokenType.SEMICOLON]
     offset = 0
     for line in text.splitlines(keepends=True):
@@ -223,9 +291,9 @@ def split(text: str) -> list[str]:
     queries: list[str] = []
     start = 0
     for end, next_start in [*sorted(cuts), (len(text), len(text))]:
-        query = text[start:end].strip()
-        if query:
-            queries.append(query)
+        # A part that holds only comments holds no token, so it is no query.
+        if any(start <= t.start < end for t in tokens):
+            queries.append(text[start:end].strip())
         start = next_start
     return queries
 
@@ -313,16 +381,21 @@ class _LocalSource:
     columns: tuple[Item, ...]
     values: tuple[Value, ...] = ()
     # What each position is computed from, and what selects the rows (ADR 0010).
-    flows: tuple[tuple[Dep, ...], ...] = ()
-    rows: tuple[Dep, ...] = ()
+    derivations: tuple[tuple[Step, ...], ...] = ()
+    rows: tuple[Step, ...] = ()
     # The tables the relation reads, whose whole rows a `COUNT(*)` over it reads.
     tables: frozenset[TableKey] = frozenset()
 
-    def deps(self, name: str) -> tuple[Dep, ...]:
+    def steps(self, name: str) -> tuple[Step, ...]:
         """Return what the position with a name is computed from."""
-        flows = self.flows or ((),) * len(self.columns)
+        derivations = self.derivations or ((),) * len(self.columns)
         return next(
-            (f for item, f in zip(self.columns, flows, strict=True) if item == name), ()
+            (
+                f
+                for item, f in zip(self.columns, derivations, strict=True)
+                if item == name
+            ),
+            (),
         )
 
 
@@ -337,11 +410,11 @@ class _Scope:
     unaliased: dict[TableKey, _TableSource] = field(default_factory=dict)
     using: dict[str, list[_Source]] = field(default_factory=dict)
     # What each select-list alias is computed from, which an `ORDER BY` can name.
-    aliases: dict[str, list[Dep]] = field(default_factory=dict)
+    aliases: dict[str, list[Step]] = field(default_factory=dict)
     # The CTEs that a subquery anywhere in the scope can read.
     ctes: dict[str, _LocalSource] = field(default_factory=dict)
     # What selects the rows: the scope's clauses and the rows of each local relation it reads.
-    rows: list[Dep] = field(default_factory=list)
+    rows: list[Step] = field(default_factory=list)
 
 
 class _Walker:
@@ -352,7 +425,7 @@ class _Walker:
         self.writes: list[Write] = []
         self.creation: Creation | None = None
         self.refs: list[ColumnRef] = []
-        # What a bare column learns from its parent expression, keyed by the column node's id.
+        # What a bare column shows from its parent expression, keyed by the column node's id.
         self.facts: dict[int, Fact] = {}
         self.keys: list[KeyEvidence] = []
         # The equalities between each pair of table references, keyed by the two sources' ids.
@@ -360,8 +433,11 @@ class _Walker:
             tuple[int, int], tuple[_TableSource, _TableSource, list[tuple[str, str]]]
         ] = {}
         self.naturals: list[Join] = []
+        self.equalities: list[Equality] = []
+        # The reference of each unqualified column that several tables can hold, keyed by the column node's id.
+        self.unsettled: dict[int, ColumnRef] = {}
         self.outputs: tuple[tuple[Item, Value], ...] = ()
-        self.flows: list[Flow] = []
+        self.derivations: list[Derivation] = []
         # The source text of each unaliased expression in a report's select list, keyed by the node's id.
         self.texts: dict[int, str] = {}
 
@@ -382,26 +458,27 @@ class _Walker:
                 *self.naturals,
             ),
             self.outputs,
-            tuple(dict.fromkeys(self.flows)),
+            tuple(dict.fromkeys(self.derivations)),
+            tuple(self.equalities),
         )
 
-    def flow(
+    def derive(
         self,
-        deps: Iterable[Dep],
+        steps: Iterable[Step],
         table: TableKey | None,
         column: str | None = None,
         position: int | None = None,
     ) -> None:
         """Record that each dependency feeds one downstream end."""
-        self.flows.extend(Flow(up, sub, table, column, position) for up, sub in deps)
+        self.derivations.extend(
+            Derivation(up, sub, table, column, position) for up, sub in steps
+        )
 
     def report(self, local: _LocalSource) -> None:
         """Record the lineage of a report: each output position, and what selects its rows."""
-        for position, deps in enumerate(local.flows):
-            self.flow(deps, None, position=position)
-        self.flow(local.rows, None)
-
-    # --- statements ---------------------------------------------------------------------------
+        for position, steps in enumerate(local.derivations):
+            self.derive(steps, None, position=position)
+        self.derive(local.rows, None)
 
     def insert(self, tree: exp.Insert) -> Statement:
         source = (
@@ -427,28 +504,30 @@ class _Walker:
         insert: exp.Insert,
         scope: _Scope,
         source: _LocalSource | None,
-        rows: list[Dep],
+        rows: list[Step],
     ) -> None:
         """Record one `INSERT` or one `INTO` of an `INSERT ALL`, whose values come from `source` or a `VALUES` list."""
         listed = isinstance(insert.this, exp.Schema)
         target = _table_key(insert.this.this if listed else insert.this)
         values: tuple[Value, ...] = source.values if source is not None else ()
-        flows: tuple[tuple[Dep, ...], ...] = source.flows if source is not None else ()
+        derivations: tuple[tuple[Step, ...], ...] = (
+            source.derivations if source is not None else ()
+        )
         if isinstance(insert.expression, exp.Values):
             [row] = insert.expression.expressions
             values = tuple(assigned(v) for v in row.expressions)
-            flows = tuple(
+            derivations = tuple(
                 tuple(self.expression(v, scope, "select", "IDENTITY"))
                 for v in row.expressions
             )
         names = self._targets(insert.this, target, values)
         self.writes.append(Write(target, None if listed else values))
-        self.flow([*(source.rows if source is not None else ()), *rows], target)
-        for position, deps in enumerate(flows):
-            if listed and len(names) == len(flows):
-                self.flow(deps, target, names[position])
+        self.derive([*(source.rows if source is not None else ()), *rows], target)
+        for position, steps in enumerate(derivations):
+            if listed and len(names) == len(derivations):
+                self.derive(steps, target, names[position])
             else:
-                self.flow(deps, target, position=position)
+                self.derive(steps, target, position=position)
 
     def update(self, tree: exp.Update) -> Statement:
         scope = _Scope(None)
@@ -456,15 +535,15 @@ class _Walker:
         self.writes.append(Write(target, None))
         self._assignments(tree.expressions, scope, target)
         where = self.expression(tree.args.get("where"), scope, "where", "FILTER")
-        self.flow(where, target)
+        self.derive(where, target)
         return "update"
 
     def merge(self, tree: exp.Merge) -> Statement:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
         source = self._add_source(scope, tree.args["using"], {})
-        self.flow(self.expression(tree.args["on"], scope, "join", "JOIN"), target)
-        self.flow(scope.rows, target)
+        self.derive(self.expression(tree.args["on"], scope, "join", "JOIN"), target)
+        self.derive(scope.rows, target)
         self._equalities(tree.args["on"], scope)
         target_source = (
             _lookup(scope, target[0], target[1])
@@ -477,7 +556,7 @@ class _Walker:
         values: tuple[Value, ...] | None = None
         for when in tree.args["whens"].expressions:
             condition = when.args.get("condition")
-            self.flow(self.expression(condition, scope, "where", "FILTER"), target)
+            self.derive(self.expression(condition, scope, "where", "FILTER"), target)
             action = when.args["then"]
             if isinstance(action, exp.Update):
                 self._assignments(action.expressions, scope, target)
@@ -485,15 +564,15 @@ class _Walker:
                 row = tuple(assigned(v) for v in action.expression.expressions)
                 names = self._targets(action.this, target, row)
                 for position, value in enumerate(action.expression.expressions):
-                    deps = self.expression(value, scope, "select", "IDENTITY")
+                    steps = self.expression(value, scope, "select", "IDENTITY")
                     if names:
-                        self.flow(deps, target, names[position])
+                        self.derive(steps, target, names[position])
                     else:
-                        self.flow(deps, target, position=position)
+                        self.derive(steps, target, position=position)
                 if not names:
                     values = row
             where = self.expression(action.args.get("where"), scope, "where", "FILTER")
-            self.flow(where, target)
+            self.derive(where, target)
         self.writes.append(Write(target, values))
         return "merge"
 
@@ -531,15 +610,15 @@ class _Walker:
         grouped = _grouped(tree.expression, columns)
         if grouped:
             self.keys.append(KeyEvidence(target, grouped, "grouped"))
-        for position, deps in enumerate(source.flows):
-            self.flow(deps, target, position=position)
-        self.flow(source.rows, target)
+        for position, steps in enumerate(source.derivations):
+            self.derive(steps, target, position=position)
+        self.derive(source.rows, target)
         return "create"
 
     def _target(self, scope: _Scope, node: exp.Table) -> TableKey:
         source = self._add_source(scope, node, {})
         if not isinstance(source, _TableSource):
-            message = "the statement writes a query, not a table"
+            message = "the statement's target is an inline view, not a table"
             raise ReadError(message)
         return source.key
 
@@ -567,13 +646,11 @@ class _Walker:
                 else [assignment.this]
             )
             fact = assigned(assignment.expression) if len(columns) == 1 else Fact()
-            deps = self.expression(assignment.expression, scope, "select", "IDENTITY")
+            steps = self.expression(assignment.expression, scope, "select", "IDENTITY")
             for column in columns:
                 name = _name(column.this)
                 self.refs.append(ColumnRef(name, ((target,),), "set", fact))
-                self.flow(deps, target, name)
-
-    # --- queries ------------------------------------------------------------------------------
+                self.derive(steps, target, name)
 
     def query(
         self, node: exp.Expr, parent: _Scope | None, ctes: dict[str, _LocalSource]
@@ -608,27 +685,33 @@ class _Walker:
         self._same_type_positions(node)
         first = self.query(node.left, parent, ctes)
         second = self.query(node.right, parent, ctes)
-        rows: list[Dep] = [*first.rows]
-        flows = first.flows
+        rows: list[Step] = [*first.rows]
+        derivations = first.derivations
         if isinstance(node, exp.Except):
             # A MINUS branch after the first removes rows and computes no value (ADR 0010).
-            removed = [*(d for f in second.flows for d in f), *second.rows]
-            rows += [(up, combine("FILTER", sub)) for up, sub in removed]
+            removed = [*(d for f in second.derivations for d in f), *second.rows]
+            rows += [(up, path_subtype("FILTER", sub)) for up, sub in removed]
         else:
             # A set operation maps its branches by position.
-            flows = (
-                tuple((*a, *b) for a, b in zip(first.flows, second.flows, strict=False))
-                + first.flows[len(second.flows) :]
+            derivations = (
+                tuple(
+                    (*a, *b)
+                    for a, b in zip(first.derivations, second.derivations, strict=False)
+                )
+                + first.derivations[len(second.derivations) :]
             )
             rows += second.rows
         # A set operation's `ORDER BY` names its output columns only.
         names = (c for c in first.columns if isinstance(c, str))
         scope = _Scope(
-            parent, aliases={n: list(f) for n, f in zip(names, flows, strict=False)}
+            parent,
+            aliases={n: list(f) for n, f in zip(names, derivations, strict=False)},
         )
         rows += self.expression(node.args.get("order"), scope, "order_by", "SORT")
         tables = first.tables | second.tables
-        return _LocalSource(first.columns, first.values, flows, tuple(rows), tables)
+        return _LocalSource(
+            first.columns, first.values, derivations, tuple(rows), tables
+        )
 
     def _same_type_positions(self, node: exp.SetOperation) -> None:
         """Give a bare column the fixed type that another branch has at its position (ADR 0007)."""
@@ -666,12 +749,12 @@ class _Walker:
             )
             if isinstance(source, _TableSource):
                 source.optional = True
-        projected: dict[int, list[Dep]] = {}
+        projected: dict[int, list[Step]] = {}
         for projection in node.expressions:
-            deps = self.expression(projection, scope, "select", "IDENTITY")
-            projected[id(projection)] = deps
+            steps = self.expression(projection, scope, "select", "IDENTITY")
+            projected[id(projection)] = steps
             if isinstance(projection, exp.Alias):
-                scope.aliases[_name(projection.args["alias"])] = deps
+                scope.aliases[_name(projection.args["alias"])] = steps
         scope.rows += self.expression(where, scope, "where", "FILTER")
         scope.rows += self.expression(
             node.args.get("group"), scope, "group_by", "GROUP_BY"
@@ -690,8 +773,10 @@ class _Walker:
             self._equalities(join.args.get("on"), scope)
         self._equalities(where and where.this, scope)
         scope.rows += self.expression(node.args.get("order"), scope, "order_by", "SORT")
-        items, values, flows = _expand(node, scope, self.texts, projected)
-        return _LocalSource(items, values, flows, tuple(scope.rows), _tables(scope))
+        items, values, derivations = _expand(node, scope, self.texts, projected)
+        return _LocalSource(
+            items, values, derivations, tuple(scope.rows), _tables(scope)
+        )
 
     def _join(
         self, scope: _Scope, join: exp.Join, ctes: dict[str, _LocalSource]
@@ -728,6 +813,9 @@ class _Walker:
                 ref = ColumnRef(name, (tables,), "join")
                 self.refs.append(ref)
                 scope.rows.append((ref, "JOIN"))
+                if isinstance(source, _TableSource):
+                    joined = ColumnRef(name, ((source.key,),), "join")
+                    self.equalities.append(Equality(ref, joined))
             scope.using[name] = [*left, source]
 
     def _add_source(
@@ -757,15 +845,13 @@ class _Walker:
         scope.rows += local.rows
         return local
 
-    # --- expressions --------------------------------------------------------------------------
-
     def expression(  # noqa: PLR0911 # one case per kind of node
         self,
         node: exp.Expr | None,
         scope: _Scope,
         position: Position,
         subtype: Subtype,
-    ) -> list[Dep]:
+    ) -> list[Step]:
         """Collect the column references of one expression, and return what it is computed from.
 
         `subtype` is the subtype of a column that the expression is, which each node below adjusts (ADR 0010).
@@ -778,12 +864,12 @@ class _Walker:
             case exp.Query() | exp.Subquery():
                 local = self.query(node, scope, scope.ctes)
                 self._single_row(node, scope)
-                deps = [*(d for f in local.flows for d in f), *local.rows]
-                return [(up, combine(subtype, sub)) for up, sub in deps]
+                steps = [*(d for f in local.derivations for d in f), *local.rows]
+                return [(up, path_subtype(subtype, sub)) for up, sub in steps]
             case exp.Column():
                 return self._column(node, scope, position, subtype)
             case exp.Window():
-                window = combine(subtype, "WINDOW")
+                window = path_subtype(subtype, "WINDOW")
                 return [
                     *self.expression(node.this, scope, position, subtype),
                     *(
@@ -795,8 +881,8 @@ class _Walker:
                 ]
             case exp.Order() if not isinstance(node.parent, exp.Query):
                 # The `ORDER BY` inside `LISTAGG ... WITHIN GROUP`.
-                sort = combine(subtype, "SORT")
-                inner = combine(subtype, "AGGREGATION")
+                sort = path_subtype(subtype, "SORT")
+                inner = path_subtype(subtype, "AGGREGATION")
                 return [
                     *self.expression(node.this, scope, position, inner),
                     *(
@@ -807,7 +893,7 @@ class _Walker:
                 ]
             case exp.Count() if _whole_rows(node):
                 # COUNT(*), COUNT(1) and COUNT of a literal read whole rows of every table in FROM (ADR 0010).
-                counted = combine(subtype, "AGGREGATION")
+                counted = path_subtype(subtype, "AGGREGATION")
                 return [
                     (Whole(t, star=False), counted)
                     for t in sorted(_tables(scope), key=_order)
@@ -829,10 +915,10 @@ class _Walker:
         scope: _Scope,
         position: Position,
         subtype: Subtype,
-    ) -> list[Dep]:
+    ) -> list[Step]:
         """Return what a `CASE` or a `DECODE` is computed from: its conditions select, and its results compute."""
-        condition = combine(subtype, "CONDITIONAL")
-        result = combine(subtype, "TRANSFORMATION")
+        condition = path_subtype(subtype, "CONDITIONAL")
+        result = path_subtype(subtype, "TRANSFORMATION")
         if isinstance(node, exp.DecodeCase):
             rest = node.expressions[1:]
             conditions = [node.expressions[0], *rest[0 : 2 * (len(rest) // 2) : 2]]
@@ -860,10 +946,19 @@ class _Walker:
             if a is None or b is None:
                 continue
             left, right = self._resolve(a, scope), self._resolve(b, scope)
-            if not (isinstance(left, _TableSource) and isinstance(right, _TableSource)):
+            if isinstance(left, _TableSource) and isinstance(right, _TableSource):
+                if left is not right or prior:
+                    self._pair(left, right, _name(a.this), _name(b.this))
                 continue
-            if left is not right or prior:
-                self._pair(left, right, _name(a.this), _name(b.this))
+            first, second = self._side(a, left), self._side(b, right)
+            if first is not None and second is not None:
+                self.equalities.append(Equality(first, second))
+
+    def _side(self, column: exp.Column, source: _Source | None) -> ColumnRef | None:
+        """Return an equality's side as a reference to its one table, or to the tables a declaration can settle."""
+        if isinstance(source, _TableSource):
+            return ColumnRef(_name(column.this), ((source.key,),), "join")
+        return self.unsettled.get(id(column))
 
     def _resolve(self, column: exp.Column, scope: _Scope) -> _Source | None:
         """Return the one source that a column belongs to, or None when the query alone cannot tell."""
@@ -915,7 +1010,7 @@ class _Walker:
 
     def _column(
         self, node: exp.Column, scope: _Scope, position: Position, subtype: Subtype
-    ) -> list[Dep]:
+    ) -> list[Step]:
         if isinstance(node.this, exp.Star):
             return []
         name = _name(node.this)
@@ -931,8 +1026,16 @@ class _Walker:
             return []
         if position == "order_by" and name in scope.aliases:
             # An `ORDER BY` name that matches a select-list alias names that position.
-            return [(up, combine(subtype, sub)) for up, sub in scope.aliases[name]]
-        return self._unqualified(name, scope, position, subtype, fact)
+            return [(up, path_subtype(subtype, sub)) for up, sub in scope.aliases[name]]
+        steps = self._unqualified(name, scope, position, subtype, fact)
+        match steps:
+            case [(ColumnRef(candidates=candidates) as ref, _)] if (
+                len(candidates[0]) > 1
+            ):
+                self.unsettled[id(node)] = ref
+            case _:
+                pass
+        return steps
 
     def _unqualified(
         self,
@@ -941,7 +1044,7 @@ class _Walker:
         position: Position,
         subtype: Subtype,
         fact: Fact,
-    ) -> list[Dep]:
+    ) -> list[Step]:
         layers: list[tuple[_TableSource, ...]] = []
         current: _Scope | None = scope
         while current is not None:
@@ -976,10 +1079,10 @@ class _Walker:
         position: Position,
         subtype: Subtype,
         fact: Fact = _NOTHING,
-    ) -> list[Dep]:
+    ) -> list[Step]:
         """Record a reference to a column of a source, and return what the column is computed from."""
         if isinstance(source, _LocalSource):
-            return [(up, combine(subtype, sub)) for up, sub in source.deps(name)]
+            return [(up, path_subtype(subtype, sub)) for up, sub in source.steps(name)]
         if source.optional:
             fact = replace(fact, nullable=False)
         ref = ColumnRef(name, ((source.key,),), position, fact)
@@ -1189,15 +1292,15 @@ def _expand(
     node: exp.Select,
     scope: _Scope,
     texts: dict[int, str],
-    projected: dict[int, list[Dep]],
-) -> tuple[tuple[Item, ...], tuple[Value, ...], tuple[tuple[Dep, ...], ...]]:
+    projected: dict[int, list[Step]],
+) -> tuple[tuple[Item, ...], tuple[Value, ...], tuple[tuple[Step, ...], ...]]:
     """Return a select's items, what each value shows, and what each is computed from, expanding a `*` over local relations.
 
     A `*` over a table keeps one item, the table, which a declaration can expand later (ADR 0008).
     """
     items: list[Item] = []
     values: list[Value] = []
-    flows: list[tuple[Dep, ...]] = []
+    derivations: list[tuple[Step, ...]] = []
     for projection in node.expressions:
         match projection:
             case exp.Star():
@@ -1215,18 +1318,18 @@ def _expand(
                         else projection
                     )
                 )
-                flows.append(tuple(projected[id(projection)]))
+                derivations.append(tuple(projected[id(projection)]))
                 continue
         for source in sources:
             if isinstance(source, _TableSource):
                 items.append(source.key)
                 values.append(source.key)
-                flows.append(((Whole(source.key, star=True), "IDENTITY"),))
+                derivations.append(((Whole(source.key, star=True), "IDENTITY"),))
             else:
                 items.extend(source.columns)
                 values.extend(source.values or (Fact(),) * len(source.columns))
-                flows.extend(source.flows or ((),) * len(source.columns))
-    return tuple(items), tuple(values), tuple(flows)
+                derivations.extend(source.derivations or ((),) * len(source.columns))
+    return tuple(items), tuple(values), tuple(derivations)
 
 
 def _tables(scope: _Scope) -> frozenset[TableKey]:
@@ -1263,12 +1366,10 @@ def _step(node: exp.Expr, subtype: Subtype) -> Subtype:
         | exp.Ordered,
     ):
         return subtype
-    return combine(
+    return path_subtype(
         subtype, "AGGREGATION" if isinstance(node, exp.AggFunc) else "TRANSFORMATION"
     )
 
-
-# --- types, nullable and observed values (ADR 0003, ADR 0007) -------------------------------
 
 _TEXT_RESULT = (
     exp.Upper,
@@ -1461,7 +1562,7 @@ def _observed(node: exp.Expr | None) -> str | None:
 
 
 def assigned(node: exp.Expr | None) -> Fact:
-    """Return what a column learns from a value assigned to it."""
+    """Return what a value assigned to a column shows about it."""
     node = None if node is None else _unparen(node)
     observed = _observed(node)
     generated = (
@@ -1478,7 +1579,7 @@ def assigned(node: exp.Expr | None) -> Fact:
 
 
 def _child_facts(node: exp.Expr) -> list[tuple[exp.Column, Fact]]:  # noqa: C901, PLR0912 # one case per position
-    """Return what each bare column below a node learns from the expressions beside it."""
+    """Return what the expressions beside each bare column below a node show about it."""
     facts: list[tuple[exp.Expr | None, Fact]] = []
     match node:
         case (

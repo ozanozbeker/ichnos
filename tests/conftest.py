@@ -4,11 +4,14 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, override
 
+import answer_key
 import pytest
 from syrupy.extensions.single_file import SingleFileSnapshotExtension, WriteMode
 
+import ichnos
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from syrupy.assertion import SnapshotAssertion
 
@@ -54,6 +57,33 @@ class DbmlChecker:
         self.process.stdin.close()
         self.process.wait()
         self.process.stdout.close()
+
+
+@pytest.fixture(scope="session")
+def synthetic() -> ichnos.Graph:
+    """Read the synthetic corpus once for every test that only reads its graph."""
+    return ichnos.read(answer_key.QUERIES)
+
+
+def end_name(
+    end: ichnos.Table | ichnos.Column | ichnos.Report | ichnos.OutputColumn,
+) -> str:
+    match end:
+        case ichnos.Table():
+            return end.name
+        case ichnos.Column():
+            return f"{end.table.name}.{end.name}"
+        case ichnos.Report():
+            return f"report {end.name}"
+        case ichnos.OutputColumn():
+            return f"report {end.report.name}.{end.name}"
+
+
+def dependency_lines(dependencies: Iterable[ichnos.Dependency]) -> set[str]:
+    return {
+        f"{end_name(d.upstream)} -> {end_name(d.downstream)} {','.join(d.subtypes)}"
+        for d in dependencies
+    }
 
 
 @pytest.fixture(scope="session")

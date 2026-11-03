@@ -4,6 +4,7 @@
 Every record compares and hashes by name only, because `Table.columns` and `Column.table` form a cycle.
 """
 
+import typing
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
@@ -103,6 +104,18 @@ class UnparsedQuery:
 
 
 type AmbiguityKind = Literal["column", "owner", "declaration", "type", "dependency"]
+"""What the readings of an ambiguity differ on (ADR 0013).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.AmbiguityKind.__value__)
+```
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +225,18 @@ class Contradiction:
 
 
 type NameMatch = Literal["ID", "<S>_ID", "<S>_CODE"]
+"""The key pattern that a column's name follows for its table, where `S` is the table's name or a singular of it (ADR 0006).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.NameMatch.__value__)
+```
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,7 +405,7 @@ class Table:
         graph.tables[0].column("status")
         ```
         """
-        folded = _fold(name)
+        folded = fold(name)
         for column in self.columns:
             if column.name == folded:
                 return column
@@ -520,7 +545,7 @@ class Report:
         graph.reports[0].output_column("state")
         ```
         """
-        folded = _fold(name)
+        folded = fold(name)
         for column in self.output_columns:
             if column.name == folded:
                 return column
@@ -542,6 +567,10 @@ class Dependency:
         A table, a column, a report or an output column.
     subtypes
         The queries behind each OpenLineage transformation subtype, each an evidence kind.
+    direct
+        Whether the dependency holds a direct subtype: `IDENTITY`, `TRANSFORMATION` or `AGGREGATION`.
+    indirect
+        Whether the dependency holds an indirect subtype, such as `JOIN` or `FILTER`.
 
     Examples
     --------
@@ -560,12 +589,12 @@ class Dependency:
     @property
     def direct(self) -> bool:
         """Whether the dependency holds a direct subtype: `IDENTITY`, `TRANSFORMATION` or `AGGREGATION`."""
-        return any(s in _DIRECT for s in self.subtypes)
+        return any(s in _read.DIRECT for s in self.subtypes)
 
     @property
     def indirect(self) -> bool:
         """Whether the dependency holds an indirect subtype, such as `JOIN` or `FILTER`."""
-        return any(s not in _DIRECT for s in self.subtypes)
+        return any(s not in _read.DIRECT for s in self.subtypes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -761,22 +790,22 @@ class Graph:
         }
         distances: dict[Table | Report, int] = dict(found.items())
         return Slice(
-            "neighborhood",
-            centers,
-            depth,
-            None,
-            distances,
-            {t: t.columns for t in found},
-            tuple(
+            kind="neighborhood",
+            starts=centers,
+            depth=depth,
+            indirect=None,
+            distances=distances,
+            columns={t: t.columns for t in found},
+            relationships=tuple(
                 r
                 for r in self.relationships
                 if {s[0].table for s in r.sides} <= set(found)
             ),
-            (),
-            (),
-            outside,
-            (),
-            self,
+            dependencies=(),
+            rollups=(),
+            outside=outside,
+            unconnected=(),
+            graph=self,
         )
 
     def join_path(self, tables: Iterable[Table]) -> Slice:
@@ -812,7 +841,7 @@ class Graph:
         neighbors = _neighbors(self.relationships)
         found = {t: _distances(t, neighbors) for t in starts}
         nodes: set[Table] = set(starts)
-        edges: set[Relationship] = set()
+        on_path: set[Relationship] = set()
         unconnected: list[Table] = []
         for index, a in enumerate(starts):
             for b in starts[index + 1 :]:
@@ -822,7 +851,7 @@ class Graph:
                     continue
                 length = da[b]
                 nodes |= {t for t in da if t in db and da[t] + db[t] == length}
-                edges |= {
+                on_path |= {
                     r
                     for t, others in neighbors.items()
                     for other, r in others
@@ -832,18 +861,18 @@ class Graph:
             t: min(d[t] for d in found.values() if t in d) for t in nodes
         }
         return Slice(
-            "join path",
-            starts,
-            None,
-            None,
-            distances,
-            {t: t.columns for t in nodes},
-            tuple(r for r in self.relationships if r in edges),
-            (),
-            (),
-            {},
-            tuple(unconnected),
-            self,
+            kind="join path",
+            starts=starts,
+            depth=None,
+            indirect=None,
+            distances=distances,
+            columns={t: t.columns for t in nodes},
+            relationships=tuple(r for r in self.relationships if r in on_path),
+            dependencies=(),
+            rollups=(),
+            outside={},
+            unconnected=tuple(unconnected),
+            graph=self,
         )
 
     def upstream(
@@ -918,8 +947,31 @@ class Graph:
 
 
 type SliceKind = Literal["neighborhood", "join path", "upstream", "downstream"]
-type Start = Table | Column | Report | OutputColumn
+"""The walk that selects a slice (ADR 0012).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.SliceKind.__value__)
+```
+"""
 type Indirect = Literal["first_hop", "all"]
+"""Which indirect dependencies a lineage walk keeps: the first hop's only, or every one (ADR 0012).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.Indirect.__value__)
+```
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1045,19 +1097,8 @@ def infer(files: Mapping[str, str]) -> Graph:
     return _Builder(read, evidence, _lineage.lineage(traces, evidence)).graph(unparsed)
 
 
-_TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
-_DIRECT: frozenset[Subtype] = frozenset({"IDENTITY", "TRANSFORMATION", "AGGREGATION"})
-_SUBTYPES: tuple[Subtype, ...] = (
-    "IDENTITY",
-    "TRANSFORMATION",
-    "AGGREGATION",
-    "JOIN",
-    "FILTER",
-    "GROUP_BY",
-    "SORT",
-    "WINDOW",
-    "CONDITIONAL",
-)
+_TYPES: tuple[Type, ...] = typing.get_args(_read.Type.__value__)
+_SUBTYPES: tuple[Subtype, ...] = typing.get_args(_read.Subtype.__value__)
 
 
 class _Walk:
@@ -1067,7 +1108,7 @@ class _Walk:
         self,
         graph: Graph,
         kind: Literal["upstream", "downstream"],
-        start: Start,
+        start: End,
         indirect: Indirect,
     ) -> None:
         self.graph = graph
@@ -1084,7 +1125,7 @@ class _Walk:
             return self._rollups(self.start)
         starts = _starts(self.start)
         self.distances: dict[Table | Report, int] = dict.fromkeys(
-            map(_holder, starts), 0
+            map(holder, starts), 0
         )
         self.kept: defaultdict[Table | Report, dict[Column | OutputColumn, None]] = (
             defaultdict(dict)
@@ -1092,7 +1133,7 @@ class _Walk:
         self.found: dict[Dependency, Dependency] = {}
         for end in starts:
             if isinstance(end, Column | OutputColumn):
-                self.kept[_holder(end)][end] = None
+                self.kept[holder(end)][end] = None
         if self.kind == "upstream" and isinstance(self.start, Column | OutputColumn):
             self._first_rows(self.start)
         self._follow(starts)
@@ -1103,18 +1144,18 @@ class _Walk:
             for h in self.distances
         }
         return Slice(
-            self.kind,
-            (self.start,),
-            None,
-            self.indirect,
-            self.distances,
-            columns,
-            (),
-            tuple(sorted(self.found.values(), key=_dependency_order)),
-            (),
-            {},
-            (),
-            self.graph,
+            kind=self.kind,
+            starts=(self.start,),
+            depth=None,
+            indirect=self.indirect,
+            distances=self.distances,
+            columns=columns,
+            relationships=(),
+            dependencies=tuple(sorted(self.found.values(), key=_dependency_order)),
+            rollups=(),
+            outside={},
+            unconnected=(),
+            graph=self.graph,
         )
 
     def _follow(self, starts: list[End]) -> None:
@@ -1139,10 +1180,10 @@ class _Walk:
                     visited.add(far)
                     following.append(far)
                     # Every indirect dependency includes the rows that each query selects for that column's table.
-                    holder = _holder(far)
-                    if self.indirect == "all" and holder not in visited:
-                        visited.add(holder)
-                        following.append(holder)
+                    table = holder(far)
+                    if self.indirect == "all" and table not in visited:
+                        visited.add(table)
+                        following.append(table)
             frontier = following
             hop += 1
 
@@ -1150,9 +1191,9 @@ class _Walk:
         """Record a dependency the slice writes, and return its far end."""
         self.found[dependency] = kept
         far = dependency.upstream if self.kind == "upstream" else dependency.downstream
-        self.distances.setdefault(_holder(far), hop)
+        self.distances.setdefault(holder(far), hop)
         if isinstance(far, Column | OutputColumn):
-            self.kept[_holder(far)][far] = None
+            self.kept[holder(far)][far] = None
         return far
 
     def _first_rows(self, start: Column | OutputColumn) -> None:
@@ -1160,7 +1201,7 @@ class _Walk:
         writing = {
             q for d in self.ends[start] for qs in d.subtypes.values() for q in qs
         }
-        for dependency in self.ends[_holder(start)]:
+        for dependency in self.ends[holder(start)]:
             subtypes = {
                 s: rows
                 for s, q in dependency.subtypes.items()
@@ -1173,7 +1214,7 @@ class _Walk:
         """Keep a dependency's subtypes: every one on the first hop, and past it only the direct ones."""
         if first or self.indirect == "all":
             return dependency
-        subtypes = {s: q for s, q in dependency.subtypes.items() if s in _DIRECT}
+        subtypes = {s: q for s, q in dependency.subtypes.items() if s in _read.DIRECT}
         return replace(dependency, subtypes=subtypes) if subtypes else None
 
     def _rollups(self, start: Table) -> Slice:
@@ -1183,12 +1224,12 @@ class _Walk:
         frontier: list[Table | Report] = [start]
         while frontier:
             following: list[Table | Report] = []
-            for holder in frontier:
+            for near in frontier:
                 for rollup in self.graph.rollups:
-                    if rollup.upstream is holder and rollup not in found:
+                    if rollup.upstream is near and rollup not in found:
                         found.append(rollup)
                         if rollup.downstream not in distances:
-                            distances[rollup.downstream] = distances[holder] + 1
+                            distances[rollup.downstream] = distances[near] + 1
                             following.append(rollup.downstream)
             frontier = following
         # Each block lists the columns and output columns that depend on the start table.
@@ -1201,33 +1242,33 @@ class _Walk:
             for dependency in self.ends[pending.pop()]:
                 far = dependency.downstream
                 if isinstance(far, Column | OutputColumn):
-                    depending[_holder(far)][far] = None
+                    depending[holder(far)][far] = None
                 if far not in seen:
                     seen.add(far)
                     pending.append(far)
         columns = {h: tuple(depending[h]) for h in distances}
         return Slice(
-            "downstream",
-            (start,),
-            None,
-            self.indirect,
-            distances,
-            columns,
-            (),
-            (),
-            tuple(
+            kind="downstream",
+            starts=(start,),
+            depth=None,
+            indirect=self.indirect,
+            distances=distances,
+            columns=columns,
+            relationships=(),
+            dependencies=(),
+            rollups=tuple(
                 sorted(
                     found,
                     key=lambda r: (_end_order(r.downstream), _end_order(r.upstream)),
                 )
             ),
-            {},
-            (),
-            self.graph,
+            outside={},
+            unconnected=(),
+            graph=self.graph,
         )
 
 
-def _starts(start: Start) -> list[End]:
+def _starts(start: End) -> list[End]:
     """Return the ends a lineage walk starts at: a report's output columns and a table's columns, with the report or table."""
     match start:
         case Table():
@@ -1250,7 +1291,7 @@ def _parts(name: str) -> list[str]:
             current = ""
         else:
             current += char
-    return [_fold(p) for p in [*parts, current]]
+    return [fold(p) for p in [*parts, current]]
 
 
 def _neighbors(
@@ -1291,7 +1332,7 @@ def _ends(ends: Iterable[Table | Report]) -> tuple[Table | Report, ...]:
     return tuple(sorted(set(ends), key=key))
 
 
-def _fold(name: str) -> str:
+def fold(name: str) -> str:
     """Return a name in dictionary form: a quoted name keeps its case, and an unquoted one becomes uppercase."""
     if len(name) > 1 and name.startswith('"') and name.endswith('"'):
         return name[1:-1].replace('""', '"')
@@ -1305,7 +1346,7 @@ def _order(table: Table) -> tuple[str, str]:
     return (table.owner or "", table.name)
 
 
-def _holder(end: End) -> Table | Report:
+def holder(end: End) -> Table | Report:
     """Return the table or report that an end belongs to."""
     match end:
         case Column():
@@ -1318,17 +1359,17 @@ def _holder(end: End) -> Table | Report:
 
 def _end_order(end: End) -> tuple[int, str, str, int, str]:
     """Sort tables before reports, then by name, with a table or report before its columns."""
-    holder = _holder(end)
+    held_by = holder(end)
     column = isinstance(end, Column | OutputColumn)
-    if isinstance(holder, Table):
+    if isinstance(held_by, Table):
         return (
             0,
-            holder.owner or "",
-            holder.name,
+            held_by.owner or "",
+            held_by.name,
             int(column),
             end.name if column else "",
         )
-    return (1, "", holder.name, int(column), end.name if column else "")
+    return (1, "", held_by.name, int(column), end.name if column else "")
 
 
 def _dependency_order(dependency: Dependency) -> tuple[object, ...]:
@@ -1339,9 +1380,9 @@ def _rollups(dependencies: tuple[Dependency, ...]) -> tuple[Rollup, ...]:
     """Join two tables, or a table and a report, wherever a dependency joins them (ADR 0010)."""
     grouped: dict[tuple[Table, Table | Report], list[Dependency]] = defaultdict(list)
     for dependency in dependencies:
-        upstream = _holder(dependency.upstream)
+        upstream = holder(dependency.upstream)
         assert isinstance(upstream, Table)  # noqa: S101 # an upstream end is a table or a column
-        grouped[upstream, _holder(dependency.downstream)].append(dependency)
+        grouped[upstream, holder(dependency.downstream)].append(dependency)
     rollups = [
         Rollup(
             upstream,

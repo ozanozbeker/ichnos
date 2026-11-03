@@ -2,12 +2,18 @@ Project ichnos {
   database_type: 'Oracle'
   Note: '''
   Inferred by ichnos from 60 queries, with no database connection.
-  Counts are distinct queries. A column with no type evidence has the type `unknown`.
+  Counts are distinct queries.
+  A column with no type evidence has the type `unknown`.
   A column with evidence for two types writes both, such as `text|number`, an ambiguity.
   `null` claims a column can hold NULL. ichnos never claims NOT NULL.
-  `>?` means the left side refers to a key on the right. `?<>?` means the direction is unknown.
-  `?-?` joins two keys. Each key is a unique index, because ichnos never claims a primary key.
+  `>?` means the left side refers to a key on the right.
+  `?<>?` means the direction is unknown.
+  `?-?` joins two keys.
+  `complete: true` means the declarations list every column.
+  `undeclared: true` marks a column that the declarations lack.
+  A table with no `kind` may list only some of its columns.
   The schema `report` holds the reports, which are queries, not tables.
+  Each key is a unique index, because ichnos never claims a primary key.
   '''
 }
 

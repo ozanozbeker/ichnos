@@ -30,7 +30,7 @@ It splits each file into queries at `;` tokens and at lines that hold only `/`, 
 It reads one query at a time.
 It resolves aliases, CTEs and derived tables within the query, and records an unqualified column in a scope with several sources as an ambiguity with its candidates.
 Evidence counts and declarations from creating queries combine queries, so they live above the module.
-The module also returns each query's lineage trace, which ichnos builds over `optimizer.scope` and never with `sqlglot.lineage` ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)).
+The module also returns each query's lineage trace, which ichnos builds with its own scope walk, never with `optimizer.scope` or `sqlglot.lineage` ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 
 A query is read whole or not at all.
 A parse that raises, a `Command` result, or a later step that raises makes the query an unparsed query, and the run continues.

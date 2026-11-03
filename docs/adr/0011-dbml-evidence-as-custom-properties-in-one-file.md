@@ -61,7 +61,10 @@ Two declarations that differ write both kinds in `kind`, such as `'base table|vi
 A relationship with a known direction is `>?` from the referring side to the key side.
 `>?` to a `unique` index gives no diagnostic, and a referring column needs `?` because ichnos never claims `not null`.
 A relationship with no direction is `?<>?`, with its sides in name order.
-It gives no diagnostic, while `<>` gives 4 and `-` gives 6 on the same columns.
+It gives no diagnostic between columns that are not keys, while `<>` gives 4 and `-` gives 6 on the same columns.
+A relationship between two keys has no direction either, and it is `?-?`.
+`@dbml/core` 11.0.1 gives `?<>?` an info diagnostic when a side is a `unique` column (run on 2026-11-03).
+A relationship with one key side always has a direction, so only the two-key case needs `?-?`.
 A composite relationship is `t.(a, b) >? u.(x, y)`.
 
 A `Ref` takes no custom property, so its evidence goes in its quoted name, such as `Ref "join 6"`.
@@ -113,7 +116,7 @@ Metadata Column MART.CUSTOMER_SEGMENTS.SEGMENT {
 dbdiagram shows it on the column's hover card.
 `t.b -> t.a`, `t.a -> t` and `t -> t` are valid `Dep` lines.
 
-The `Project` block sets `database_type: 'Oracle'` and a note that explains `unknown`, `|`, `null`, `?<>?` and the schema `report`.
+The `Project` block sets `database_type: 'Oracle'` and a note that explains every mark the file can hold, with the legend lines of a slice ([ADR 0012](0012-llm-output-as-dbml-slices-under-a-character-budget.md)).
 
 ## Considered options
 
