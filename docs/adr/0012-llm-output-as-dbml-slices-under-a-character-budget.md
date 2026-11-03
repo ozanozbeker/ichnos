@@ -2,7 +2,7 @@
 
 ichnos writes two outputs to paste into an LLM chat: a summary with one line per table and report, and slices.
 A slice is DBML in ADR 0011's dialect, written by the same code as the DBML file over a selected part of the graph ([ADR 0011](0011-dbml-evidence-as-custom-properties-in-one-file.md)).
-So a test parses a slice with `@dbml/core` 11.0.1 as it parses the full file, and dbdiagram draws a slice.
+So a test parses a slice with `@dbml/core` as it parses the full file, and dbdiagram draws a slice.
 DBML costs the fewest tokens of the formats that carry refs ([issue 21](https://github.com/ozanozbeker/ichnos/issues/21)).
 No study tests DBML, so this choice rests on cost and on one writer, not on measured accuracy.
 

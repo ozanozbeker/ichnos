@@ -1,7 +1,7 @@
 # DBML output writes evidence as custom properties, in one file with the lineage
 
 ichnos writes one DBML file that holds the inferred schema, the reports and the lineage.
-It writes the text directly ([issue 20](https://github.com/ozanozbeker/ichnos/issues/20)), and every file must parse in `@dbml/core` 11.0.1 with no error and no diagnostic.
+It writes the text directly ([issue 20](https://github.com/ozanozbeker/ichnos/issues/20)), and every file must parse with no error and no diagnostic in the `@dbml/core` that `tests/dbml/package-lock.json` pins ([ADR 0015](0015-tests-score-the-answer-key-through-deviation-lists-and-parse-dbml-with-dbml-core.md)).
 A prototype on the branch [`prototype/dbml-output`](https://github.com/ozanozbeker/ichnos/tree/prototype/dbml-output/prototypes/dbml_output) wrote the synthetic corpus three ways: as custom properties, as notes and as comments.
 The measurements below come from that prototype and from the dbdiagram editor on 2026-11-03.
 
