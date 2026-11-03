@@ -5,7 +5,7 @@ Every record compares and hashes by name only, because `Table.columns` and `Colu
 """
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from ichnos import _infer, _read
@@ -351,6 +351,75 @@ class Table:
     keys: tuple[Key, ...] = field(compare=False, repr=False)
     ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
+    def column(self, name: str) -> Column:
+        """Return the column with a name, which compares in dictionary form as Oracle folds it.
+
+        Parameters
+        ----------
+        name
+            An unquoted name, which matches without regard to case, or a quoted one, which keeps its case.
+
+        Returns
+        -------
+        :
+            The column.
+
+        Raises
+        ------
+        KeyError
+            When the table holds no such column.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer({"q": "SELECT o.status FROM sales.orders o"})
+        graph.tables[0].column("status")
+        ```
+        """
+        folded = _fold(name)
+        for column in self.columns:
+            if column.name == folded:
+                return column
+        raise KeyError(name)
+
+
+@dataclass(frozen=True, slots=True)
+class Relationship:
+    """An inferred claim that columns of one table match columns of another table, or of the same table (ADR 0002).
+
+    Attributes
+    ----------
+    sides
+        The two sides' columns, aligned position by position.
+        With a direction, the first side refers to the second. Without one, the sides go in name order.
+    direction
+        The key that the first side refers to, or `None` when no side, or both, equal a key of their table.
+    shared
+        The key of a third table that both sides refer to, for a shared reference, or `None`.
+    join
+        The queries whose bare `=` join conditions give the relationship evidence.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer(
+        {
+            "q": "SELECT o.order_id FROM sales.orders o JOIN sales.customers c ON c.customer_id = o.customer_id"
+        }
+    )
+    graph.relationships
+    ```
+    """
+
+    sides: tuple[tuple[Column, ...], tuple[Column, ...]]
+    direction: Key | None = field(compare=False)
+    shared: Key | None = field(compare=False)
+    join: tuple[Query, ...] = field(compare=False, repr=False)
+
 
 @dataclass(frozen=True, slots=True)
 class Graph:
@@ -360,6 +429,8 @@ class Graph:
     ----------
     tables
         Every table that a query reads or writes, by owner and then by name.
+    relationships
+        Every relationship, by the first side's table and columns.
     queries
         Every query that ichnos read, by file key and then by position.
     unparsed
@@ -378,6 +449,7 @@ class Graph:
     """
 
     tables: tuple[Table, ...]
+    relationships: tuple[Relationship, ...]
     queries: tuple[Query, ...]
     unparsed: tuple[UnparsedQuery, ...]
     ambiguities: tuple[Ambiguity, ...]
@@ -447,7 +519,27 @@ def infer(files: Mapping[str, str]) -> Graph:
 
 
 _TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+
+
+def _fold(name: str) -> str:
+    """Return a name in dictionary form: a quoted name keeps its case, and an unquoted one becomes uppercase."""
+    if len(name) > 1 and name.startswith('"') and name.endswith('"'):
+        return name[1:-1].replace('""', '"')
+    return name.upper()
+
+
 _SHAPES: tuple[KeyShape, ...] = ("generated", "merge", "single_row", "grouped")
+
+
+def _order(table: Table) -> tuple[str, str]:
+    return (table.owner or "", table.name)
+
+
+def _key_of(columns: tuple[Column, ...]) -> Key | None:
+    """Return the key of the columns' table whose columns equal them, or None."""
+    names = {c.name for c in columns}
+    table = columns[0].table
+    return next((k for k in table.keys if {c.name for c in k.columns} == names), None)
 
 
 def _bare_name(name: str) -> str:
@@ -520,7 +612,53 @@ class _Builder:
         ambiguities.sort(key=position)
         keys = sorted(self.evidence.tables, key=lambda k: (k[0] or "", k[1]))
         tables = tuple(self._table(key) for key in keys)
-        return Graph(tables, tuple(self.queries), tuple(unparsed), tuple(ambiguities))
+        relationships = self._relationships({(t.owner, t.name): t for t in tables})
+        return Graph(
+            tables,
+            relationships,
+            tuple(self.queries),
+            tuple(unparsed),
+            tuple(ambiguities),
+        )
+
+    def _relationships(
+        self, tables: dict[_read.TableKey, Table]
+    ) -> tuple[Relationship, ...]:
+        found: list[Relationship] = []
+        for sides, indices in self.evidence.relationships.items():
+            columns = [tuple(tables[t].column(n) for n in names) for t, names in sides]
+            keyed = [_key_of(c) for c in columns]
+            direction = None
+            if len([k for k in keyed if k is not None]) == 1:
+                # The side whose columns equal a key of its table is the referenced side.
+                referenced = 0 if keyed[0] is not None else 1
+                direction = keyed[referenced]
+                columns = [columns[1 - referenced], columns[referenced]]
+            found.append(
+                Relationship(
+                    (columns[0], columns[1]), direction, None, self.records(indices)
+                )
+            )
+        # A shared reference's sides both refer to one key of a third table (ADR 0002).
+        refers = {(r.sides[0], r.direction) for r in found if r.direction is not None}
+        for index, relationship in enumerate(found):
+            first, second = relationship.sides
+            tables_ = {first[0].table, second[0].table}
+            for side, key in refers:
+                if (
+                    side == first
+                    and key.columns[0].table not in tables_
+                    and (second, key) in refers
+                ):
+                    found[index] = replace(relationship, shared=key)
+        return tuple(
+            sorted(
+                found,
+                key=lambda r: [
+                    (_order(c.table), c.name) for side in r.sides for c in side
+                ],
+            )
+        )
 
     def _column_ambiguities(self) -> list[Ambiguity]:
         ambiguities: list[Ambiguity] = []

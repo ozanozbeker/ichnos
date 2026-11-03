@@ -19,3 +19,23 @@ key,"SALES.ORDER_LINES(ORDER_ID, LINE_NO)",miss,"ADR 0006: name patterns find no
 key,"SALES.ORDER_PROMOTIONS(ORDER_ID, PROMO_ID)",miss,"ADR 0006: name patterns find no composite key, and no query shape shows this one"
 key,SALES.PROMOTIONS(PROMO_CODE),miss,"ADR 0006: a unique business key such as PROMO_CODE follows no name pattern, and no query shape shows it"
 key,SALES.PROMOTIONS(PROMO_ID),miss,ADR 0006: the abbreviated key PROMO_ID follows no name pattern
+relationship,HR.EMP_DIRECTORY(DEPT_NO) > HR.DEPARTMENTS(DEPARTMENT_ID),extra,"README trap: HR.EMP_DIRECTORY renames DEPARTMENT_ID as DEPT_NO, and the answer key states no constraint on a view"
+relationship,HR.JOB_HISTORY(DEPARTMENT_ID) > HR.DEPARTMENTS(DEPARTMENT_ID),miss,README trap: no query reads HR.JOB_HISTORY
+relationship,HR.JOB_HISTORY(EMPLOYEE_ID) > HR.EMPLOYEES(EMPLOYEE_ID),miss,README trap: no query reads HR.JOB_HISTORY
+relationship,INV.PRODUCTS(CATEGORY_ID) > INV.PRODUCT_CATEGORIES(CATEGORY_ID),miss,"ADR 0002: 010 joins INV.PRODUCTS to a recursive CTE, which is no table reference"
+relationship,INV.SHIPMENTS(ORDER_ID) > SALES.ORDERS(ORDER_ID),miss,README trap: no query joins on some declared foreign keys
+relationship,INV.SHIPMENT_LINES(SHIPMENT_ID) > INV.SHIPMENTS(SHIPMENT_ID),miss,README trap: no query joins on some declared foreign keys
+relationship,INV.STOCK_LEVELS(PRODUCT_ID) <> SALES.ORDER_LINES(PRODUCT_ID),extra,"README trap: 024 joins on PRODUCT_ID, and both columns reference INV.PRODUCTS"
+relationship,INV.STOCK_LEVELS(PRODUCT_ID) > INV.PRODUCTS(PRODUCT_ID),miss,"ADR 0002: 025 compares INV.STOCK_LEVELS with a derived table, which is no table reference"
+relationship,MART.CUSTOMER_DAILY_SALES(CURRENCY_CODE) > REF.CURRENCIES(CURRENCY_CODE),miss,README trap: no query joins on some declared foreign keys
+relationship,MART.CUSTOMER_DAILY_SALES(CUSTOMER_ID) > SALES.CUSTOMERS(CUSTOMER_ID),miss,README trap: no query joins on some declared foreign keys
+relationship,MART.CUSTOMER_SEGMENTS(CUSTOMER_ID) > SALES.CUSTOMERS(CUSTOMER_ID),miss,README trap: no query joins on some declared foreign keys
+relationship,MART.ORDER_LINE_FACTS(CURRENCY_CODE) > REF.CURRENCIES(CURRENCY_CODE),miss,README trap: no query joins on some declared foreign keys
+relationship,MART.ORDER_LINE_FACTS(CUSTOMER_ID) > SALES.CUSTOMERS(CUSTOMER_ID),miss,README trap: no query joins on some declared foreign keys
+relationship,"MART.ORDER_LINE_FACTS(ORDER_ID, LINE_NO) > SALES.ORDER_LINES(ORDER_ID, LINE_NO)",miss,README trap: no query joins on some declared foreign keys
+relationship,MART.ORDER_LINE_FACTS(PRODUCT_ID) > INV.PRODUCTS(PRODUCT_ID),miss,README trap: no query joins on some declared foreign keys
+relationship,SALES.CUSTOMER_ADDRESSES(CUSTOMER_ID) > SALES.CUSTOMERS(CUSTOMER_ID),miss,README trap: no query joins on some declared foreign keys
+relationship,SALES.ORDERS(CURRENCY_CODE) > REF.CURRENCIES(CURRENCY_CODE),miss,"ADR 0002: 011 joins REF.CURRENCIES to a CTE, which is no table reference"
+relationship,"SALES.ORDERS(CURRENCY_CODE, ORDER_ID) <> SALES.PAYMENTS(CURRENCY_CODE, ORDER_ID)",extra,"README trap: 044 also joins on CURRENCY_CODE, and ADR 0002 makes every equality between two references one relationship"
+relationship,SALES.ORDERS(SALES_REP_ID) > HR.EMPLOYEES(EMPLOYEE_ID),miss,"ADR 0002: 039 joins HR.EMPLOYEES to a derived table, which is no table reference"
+relationship,SALES.PAYMENTS(CURRENCY_CODE) > REF.CURRENCIES(CURRENCY_CODE),miss,README trap: no query joins on some declared foreign keys

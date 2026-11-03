@@ -6,7 +6,7 @@ The graph module holds the records, and this module turns them into text that `@
 import re
 from typing import TYPE_CHECKING
 
-from ichnos._graph import Ambiguity, Column, Graph, Key, Table, count
+from ichnos._graph import Ambiguity, Column, Graph, Key, Relationship, Table, count
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,7 +56,39 @@ def dbml(graph: Graph) -> str:
     ```
     """
     blocks = [_project(graph), *(_table(t) for t in graph.tables)]
+    if graph.relationships:
+        blocks.append("\n".join(_ref(r) for r in graph.relationships))
     return "\n\n".join(blocks) + "\n"
+
+
+def _ref(relationship: Relationship) -> str:
+    """Write a relationship as a `Ref` whose name holds its evidence (ADR 0011)."""
+    first, second = relationship.sides
+    if relationship.direction is not None:
+        operator = ">?"
+    elif _keyed(first) and _keyed(second):
+        # Two keys give one-to-one, and `?<>?` between two unique columns raises a diagnostic.
+        operator = "?-?"
+    else:
+        operator = "?<>?"
+    name = f"join {count(relationship.join)}"
+    if relationship.shared is not None:
+        key = relationship.shared
+        name += f", shared reference to {_table_name(key.columns[0].table)}.{_key_label(key)}"
+    return (
+        f"Ref {_name_quoted(name)}: {_endpoint(first)} {operator} {_endpoint(second)}"
+    )
+
+
+def _keyed(columns: tuple[Column, ...]) -> bool:
+    names = {c.name for c in columns}
+    return any({c.name for c in k.columns} == names for k in columns[0].table.keys)
+
+
+def _endpoint(columns: tuple[Column, ...]) -> str:
+    table = _table_name(columns[0].table)
+    names = [_name(c.name) for c in columns]
+    return f"{table}.{names[0]}" if len(names) == 1 else f"{table}.({', '.join(names)})"
 
 
 def _project(graph: Graph) -> str:
@@ -65,6 +97,8 @@ def _project(graph: Graph) -> str:
         "Counts are distinct queries. A column with no type evidence has the type `unknown`.",
         "A column with evidence for two types writes both, such as `text|number`, an ambiguity.",
         "`null` claims a column can hold NULL. ichnos never claims NOT NULL.",
+        "`>?` means the left side refers to a key on the right. `?<>?` means the direction is unknown.",
+        "`?-?` joins two keys. Each key is a unique index, because ichnos never claims a primary key.",
     ]
     lines = "\n".join(f"  {line}" for line in note)
     return (
@@ -185,6 +219,10 @@ def _table_name(table: Table) -> str:
         if table.owner is None
         else f"{_name(table.owner)}.{_name(table.name)}"
     )
+
+
+def _name_quoted(name: str) -> str:
+    return f'"{name.translate(_ESCAPES)}"'
 
 
 def _name(name: str) -> str:

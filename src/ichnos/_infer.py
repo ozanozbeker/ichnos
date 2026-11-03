@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from ichnos._read import Fact
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from ichnos._read import (
         ColumnRef,
@@ -98,12 +98,32 @@ class AmbiguousColumn:
     candidates: tuple[TableKey, ...]
 
 
+type Side = tuple[TableKey, tuple[str, ...]]
+"""One side of a relationship: a table and its columns, aligned with the other side's."""
+
+
 @dataclass(slots=True)
 class Evidence:
     """The evidence of every query, combined."""
 
     tables: dict[TableKey, TableEvidence]
     ambiguous: list[AmbiguousColumn]
+    # The queries behind each relationship, with its sides in name order (ADR 0002).
+    relationships: dict[tuple[Side, Side], set[int]]
+
+
+def relationship(
+    left: TableKey, right: TableKey, columns: Iterable[tuple[str, str]]
+) -> tuple[Side, Side]:
+    """Return a relationship's two sides in name order, with each side's columns aligned to the other's."""
+    pairs = sorted(set(columns))
+    forward = ((left, tuple(a for a, _ in pairs)), (right, tuple(b for _, b in pairs)))
+    swapped = sorted((b, a) for a, b in pairs)
+    backward = (
+        (right, tuple(a for a, _ in swapped)),
+        (left, tuple(b for _, b in swapped)),
+    )
+    return min(forward, backward, key=lambda r: [((t[0] or "", t[1]), c) for t, c in r])
 
 
 def combine(traces: Sequence[Trace]) -> Evidence:
@@ -130,7 +150,24 @@ def combine(traces: Sequence[Trace]) -> Evidence:
         for key in trace.keys:
             tables[key.table].keys[key.columns][key.shape].add(index)
     declarations.record(tables)
-    return Evidence(dict(tables), list(ambiguous))
+    return Evidence(dict(tables), list(ambiguous), _relationships(traces, declarations))
+
+
+def _relationships(
+    traces: Sequence[Trace], declarations: _Declarations
+) -> dict[tuple[Side, Side], set[int]]:
+    found: defaultdict[tuple[Side, Side], set[int]] = defaultdict(set)
+    for index, trace in enumerate(traces):
+        for join in trace.joins:
+            columns = join.columns
+            if join.natural:
+                # A NATURAL JOIN reads as USING over the names that two declarations share (ADR 0002).
+                left = declarations.columns(join.left) or ()
+                right = declarations.columns(join.right) or ()
+                columns = tuple((n, n) for n in left if n in right)
+            if columns:
+                found[relationship(join.left, join.right, columns)].add(index)
+    return dict(found)
 
 
 class _Declarations:
