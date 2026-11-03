@@ -24,6 +24,10 @@ app = cyclopts.App(
 )
 
 type Output = Annotated[Path | None, cyclopts.Parameter(name=["--output", "-o"])]
+type Suffix = Annotated[
+    tuple[str, ...],
+    cyclopts.Parameter(name="--suffix", negative="", consume_multiple=False),
+]
 
 
 def _command[**P](function: Callable[P, None]) -> Callable[P, None]:
@@ -40,9 +44,9 @@ def _command[**P](function: Callable[P, None]) -> Callable[P, None]:
     return run
 
 
-def _graph(corpus: Path) -> Graph:
+def _graph(corpus: Path, suffix: tuple[str, ...], encoding: str) -> Graph:
     try:
-        return read(corpus)
+        return read(corpus, suffix, encoding)
     except OSError as error:
         message = f"{error.strerror}: {corpus}"
         raise IchnosError(message) from None
@@ -58,17 +62,28 @@ def _write(text: str, output: Path | None) -> None:
 
 @app.command
 @_command
-def dbml(corpus: Path, /, *, output: Output = None) -> None:
+def dbml(
+    corpus: Path,
+    /,
+    *,
+    output: Output = None,
+    suffix: Suffix = (".sql",),
+    encoding: str = "cp1252",
+) -> None:
     """Write the DBML file of the inferred schema.
 
     Parameters
     ----------
     corpus
-        A folder of `.sql` files, or one file.
+        A folder of query files, or one file.
     output
         The file to write, instead of stdout.
+    suffix
+        The suffix of the files to read in a folder, which can repeat.
+    encoding
+        The codec for a file with no BOM that fails UTF-8.
     """
-    _write(write_dbml(_graph(corpus)), output)
+    _write(write_dbml(_graph(corpus, suffix, encoding)), output)
 
 
 def main() -> None:

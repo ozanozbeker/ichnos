@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The `uvx` job resolves fresh, so a new sqlglot patch can change the output with no commit here.
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions: {}
 
@@ -155,10 +158,42 @@ jobs:
           # great-docs reads GitHub Releases for the changelog page, and an anonymous runner gets 60 requests an hour.
           GITHUB_TOKEN: ${{ github.token }}
 
+  # A user runs `uvx ichnos`, which resolves fresh from `pyproject.toml` and ignores `uv.lock` (issue 16).
+  # `--no-build` fails on any dependency that would need a compiler, as a locked-down machine lacks one.
+  uvx:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        from: ["ichnos", "ichnos[c]"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: latest-known
+          enable-cache: false
+      - run: uv build --wheel
+      # A relative path, because uv on Windows reads no `/d/a/...` path from bash.
+      - run: uvx --no-build --from "${FROM} @ ./$(ls dist/ichnos-*.whl)" ichnos dbml tests/fixtures/oracle_synthetic/queries -o out.dbml
+        env:
+          FROM: ${{ matrix.from }}
+      - run: git diff --no-index --exit-code tests/__snapshots__/test_dbml/test_the_synthetic_corpus_matches_its_golden_file.dbml out.dbml
+
   # The ruleset requires this one job, so a change to the jobs above never touches the ruleset.
   all-green:
     if: always()
-    needs: [test, next-python, lowest, lint, docs]
+    needs: [test, next-python, lowest, lint, docs, uvx]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions: {}

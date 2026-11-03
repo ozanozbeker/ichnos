@@ -68,10 +68,34 @@ def test_main_runs_the_app(
     assert capsys.readouterr().out.startswith("Project ichnos {")
 
 
-def test_python_m_ichnos_writes_the_same_bytes_as_the_output_file(tmp_path: Path):
+def test_suffix_and_encoding_mirror_the_api(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+):
+    (tmp_path / "q.txt").write_bytes('SELECT t."é" FROM t'.encode("cp1252"))
+    tokens = [
+        "dbml",
+        str(tmp_path),
+        "--suffix",
+        ".sql",
+        "--suffix",
+        ".txt",
+        "--encoding",
+        "latin-1",
+    ]
+    code, out, _ = _run(capsys, *tokens)
+    assert code == 0
+    assert out == ichnos.dbml(ichnos.read(tmp_path, (".sql", ".txt"), "latin-1"))
+
+
+def test_python_m_ichnos_writes_the_same_utf_8_bytes_as_the_output_file(tmp_path: Path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "q.sql").write_text('SELECT t."café" FROM t\n', encoding="utf-8")
     output = tmp_path / "schema.dbml"
-    command = [sys.executable, "-m", "ichnos", "dbml", str(answer_key.QUERIES)]
+    command = [sys.executable, "-m", "ichnos", "dbml", str(corpus)]
     stdout = subprocess.run(command, capture_output=True, check=True).stdout  # noqa: S603 # runs ichnos itself
     subprocess.run([*command, "-o", str(output)], check=True)  # noqa: S603 # runs ichnos itself
     assert stdout == output.read_bytes()
+    assert '"café" unknown'.encode() in stdout
+    assert not stdout.startswith(b"\xef\xbb\xbf")
     assert b"\r" not in stdout
