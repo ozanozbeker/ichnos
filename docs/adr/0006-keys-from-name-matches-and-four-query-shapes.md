@@ -42,8 +42,8 @@ Each is its own kind, counted in distinct queries ([ADR 0001](0001-evidence-coun
   Oracle raises ORA-01427 when such a subquery returns two rows, so a valid production query shows that it returns one.
   In the corpus, 024 gives `SHIPMENTS (SHIPMENT_ID)`.
   `IN`, `EXISTS`, `ANY` and `ALL` take many rows, so they give nothing.
-- `grouped`: the output columns of a creating query that project its `GROUP BY` expressions.
-  Under `SELECT DISTINCT` or a top-level `UNION`, `INTERSECT` or `MINUS`, every output column forms the key, because Oracle removes duplicate rows.
+- `grouped`: the declared columns of a creating query that project its `GROUP BY` expressions.
+  Under `SELECT DISTINCT` or a top-level `UNION`, `INTERSECT` or `MINUS`, every declared column forms the key, because Oracle removes duplicate rows.
   `ROLLUP`, `CUBE`, `GROUPING SETS` and `UNION ALL` give nothing, because their rows can repeat.
 
 `merge` and `single_row` count only when every conjunct of the clause is a bare `=` between a column of the table and a bind variable, an outer column or a source column.
