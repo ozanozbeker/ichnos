@@ -23,6 +23,7 @@ from ichnos._graph import (
     infer,
 )
 from ichnos._infer import ContradictionReason
+from ichnos._llm import summary
 from ichnos._read import KeyShape, Position, Subtype, TableKind, Type
 
 __all__ = [
@@ -52,4 +53,5 @@ __all__ = [
     "dbml",
     "infer",
     "read",
+    "summary",
 ]

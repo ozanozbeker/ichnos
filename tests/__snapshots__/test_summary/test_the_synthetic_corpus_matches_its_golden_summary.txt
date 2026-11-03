@@ -1,0 +1,78 @@
+Summary of 60 queries, inferred with no database connection.
+CUSTOMERS: 3 columns, read 1; joins ORDERS
+EMP: 5 columns, read 1; joins HR.DEPARTMENTS
+ORDERS: 3 columns, read 1; joins CUSTOMERS
+ORDER_LINES: 3 columns, read 1; joins PRODUCTS
+PRODUCTS: 2 columns, read 1; joins ORDER_LINES
+HR.DEPARTMENTS: 4 columns, read 3; joins EMP, HR.EMPLOYEES, HR.EMP_DIRECTORY, REF.COUNTRIES
+HR.EMPLOYEES: 6 columns, read 5; joins HR.DEPARTMENTS, SALES.CUSTOMERS
+HR.EMP_DIRECTORY: 5 columns, read 1; joins HR.DEPARTMENTS
+INV.PRODUCTS: 7 columns, read 7; joins SALES.ORDER_LINES
+INV.PRODUCT_CATEGORIES: 3 columns, read 3; joins MART.ORDER_LINE_FACTS
+INV.SHIPMENTS: 7 columns, read 3; joins INV.WAREHOUSES
+INV.SHIPMENT_LINES: 4 columns, read 2; joins SALES.ORDER_LINES
+INV.STOCK_LEVELS: 5 columns, read 3, write 2; joins INV.WAREHOUSES, SALES.ORDER_LINES
+INV.WAREHOUSES: 4 columns, read 3; joins INV.SHIPMENTS, INV.STOCK_LEVELS, REF.COUNTRIES
+MART.CUSTOMER_DAILY_SALES: base table, 6 columns, complete, read 4, write 1
+MART.CUSTOMER_SEGMENTS: base table, 4 columns, complete, read 3, write 1
+MART.LAPSED_CUSTOMERS: base table, 1 column, complete, read 1; joins SALES.CUSTOMERS
+MART.MV_CATEGORY_MONTHLY: materialized view, 5 columns, complete, read 1
+MART.ORDER_LINE_FACTS: base table, 9 columns, complete, read 3, write 1; joins INV.PRODUCT_CATEGORIES
+MART.V_KEY_CUSTOMERS: view, 4 columns, complete, read 1
+REF.COUNTRIES: 2 columns, read 3; joins HR.DEPARTMENTS, INV.WAREHOUSES, SALES.CUSTOMER_ADDRESSES
+REF.CURRENCIES: 2 columns, read 1
+SALES.CUSTOMERS: 6 columns, read 11; joins HR.EMPLOYEES, MART.LAPSED_CUSTOMERS, SALES.ORDERS
+SALES.CUSTOMER_ADDRESSES: 3 columns, read 1; joins REF.COUNTRIES, SALES.ORDERS
+SALES.MV_DAILY_SALES: 4 columns, read 1
+SALES.ORDERS: 10 columns, read 19, write 1; joins SALES.CUSTOMERS, SALES.CUSTOMER_ADDRESSES, SALES.ORDER_LINES, SALES.ORDER_PROMOTIONS, SALES.PAYMENTS
+SALES."ORDERS@ARCHIVE": 4 columns, read 1
+SALES.ORDER_LINES: 6 columns, read 9, write 1; joins INV.PRODUCTS, INV.SHIPMENT_LINES, INV.STOCK_LEVELS, SALES.ORDERS
+SALES.ORDER_PROMOTIONS: 2 columns, read 2; joins SALES.ORDERS, SALES.PROMOTIONS
+SALES.PAYMENTS: 7 columns, read 4; joins SALES.ORDERS
+SALES.PROMOTIONS: 4 columns, read 2, write 1; joins SALES.ORDER_PROMOTIONS
+SALES.V_ORDER_SUMMARY: 5 columns, read 1
+report."001_active_customers": report, 3 columns; from SALES.CUSTOMERS
+report."002_orders_with_customers": report, 4 columns; from SALES.CUSTOMERS, SALES.ORDERS
+report."003_orders_comma_join_synonyms": report, 4 columns; from CUSTOMERS, ORDERS
+report."004_order_lines_with_products": report, 6 columns; from INV.PRODUCTS, SALES.ORDER_LINES
+report."005_customers_without_orders": report, 3 columns; from SALES.CUSTOMERS, SALES.ORDERS
+report."006_employees_with_managers": report, 3 columns; from HR.EMPLOYEES
+report."007_unshipped_order_lines": report, 4 columns; from INV.SHIPMENT_LINES, SALES.ORDER_LINES
+report."008_stock_by_warehouse": report, 5 columns; from INV.STOCK_LEVELS, INV.WAREHOUSES
+report."009_category_tree_connect_by": report, 3 columns; from INV.PRODUCT_CATEGORIES
+report."010_category_tree_recursive_cte": report, 4 columns; from INV.PRODUCTS, INV.PRODUCT_CATEGORIES
+report."011_monthly_revenue_by_currency": report, 3 columns; from REF.CURRENCIES, SALES.ORDERS, SALES.ORDER_LINES
+report."012_top_customers_rownum": report, 3 columns; from SALES.CUSTOMERS, SALES.ORDERS
+report."013_orders_with_payment": report, 2 columns; from SALES.ORDERS, SALES.PAYMENTS
+report."014_products_never_ordered": report, 3 columns; from INV.PRODUCTS, SALES.ORDER_LINES
+report."015_last_payment_per_order": report, 3 columns; from SALES.ORDERS, SALES.PAYMENTS
+report."016_unqualified_columns_in_join": report, 4 columns; from SALES.CUSTOMERS, SALES.ORDERS
+report."017_order_summary_view": report, 4 columns; from SALES.V_ORDER_SUMMARY
+report."018_employee_directory_view": report, 4 columns; from HR.DEPARTMENTS, HR.EMP_DIRECTORY
+report."019_daily_sales_mview": report, 4 columns; from SALES.MV_DAILY_SALES
+report."020_emp_synonym": report, 4 columns; from EMP, HR.DEPARTMENTS
+report."021_orders_with_archive": report, 5 columns; from SALES."ORDERS@ARCHIVE", SALES.ORDERS
+report."027_orders_with_promotions": report, 4 columns; from SALES.ORDERS, SALES.ORDER_PROMOTIONS, SALES.PROMOTIONS
+report."028_payments_quoted_identifiers": report, 4 columns; from SALES.PAYMENTS
+report."029_order_status_labels": report, 4 columns; from SALES.ORDERS
+report."030_latest_order_per_customer": report, 3 columns; from SALES.ORDERS
+report."031_recent_shipments_fetch_first": report, 5 columns; from INV.SHIPMENTS
+report."033_hint_and_binds": report, 3 columns; from SALES.ORDERS
+report."034_ship_and_bill_addresses": report, 5 columns; from REF.COUNTRIES, SALES.CUSTOMER_ADDRESSES, SALES.ORDERS
+report."035_departments_by_country": report, 3 columns; from HR.DEPARTMENTS, HR.EMPLOYEES, REF.COUNTRIES
+report."036_staff_purchases_by_email": report, 4 columns; from HR.EMPLOYEES, SALES.CUSTOMERS
+report."037_account_managers": report, 3 columns; from HR.EMPLOYEES, SALES.CUSTOMERS
+report."038_daily_reports#1": report, 1 column; from SALES.ORDERS
+report."038_daily_reports#2": report, 1 column; from SALES.CUSTOMERS
+report."039_rep_sales_inline_view": report, 4 columns; from HR.EMPLOYEES, SALES.ORDERS
+report."040_products_per_order": report, 2 columns; from ORDER_LINES, PRODUCTS
+report."041_duplicate_customer_emails": report, 3 columns; from SALES.CUSTOMERS
+report."042_join_using": report, 4 columns; from SALES.ORDERS, SALES.ORDER_LINES
+report."043_shipments_per_warehouse_country": report, 3 columns; from INV.SHIPMENTS, INV.WAREHOUSES, REF.COUNTRIES
+report."044_order_payment_balance": report, 4 columns; from SALES.ORDERS, SALES.PAYMENTS
+report."054_segment_summary": report, 3 columns; from MART.CUSTOMER_SEGMENTS
+report."055_key_customers": report, 3 columns; from MART.V_KEY_CUSTOMERS
+report."056_key_customers_dashboard": report, 3 columns; from MART.V_KEY_CUSTOMERS
+report."057_mart_daily_checks#1": report, 4 columns; from MART.CUSTOMER_DAILY_SALES
+report."057_mart_daily_checks#2": report, 3 columns; from MART.LAPSED_CUSTOMERS, SALES.CUSTOMERS
+report."058_category_monthly_eur": report, 4 columns; from MART.MV_CATEGORY_MONTHLY
