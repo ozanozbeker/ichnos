@@ -164,3 +164,11 @@ _Avoid_: source, parent
 
 **Downstream**: The end of a dependency that is derived or selected: a table, a report or a column.
 _Avoid_: target, child, sink
+
+## Output
+
+**Slice**: A part of the inferred schema and lineage that ichnos selects for one question and writes to paste into an LLM chat.
+_Avoid_: context, excerpt, subgraph, view
+
+**Summary**: The list of one line per table and report that ichnos writes so a user can choose what to slice.
+_Avoid_: table summary, overview, index, catalog
