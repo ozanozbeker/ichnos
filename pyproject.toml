@@ -34,6 +34,10 @@ Repository = "https://github.com/ozanozbeker/ichnos"
 [project.scripts]
 ichnos = "ichnos._cli:main"
 
+[project.optional-dependencies]
+# The compiled build runs about 3x faster, and its wheels need no compiler on CPython 3.14 and 3.15 (ADR 0005).
+c = ["sqlglot[c]>=30.23.0,<30.28"]
+
 [dependency-groups]
 dev = [
   "coverage>=7.17.0",
