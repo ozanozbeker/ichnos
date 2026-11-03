@@ -67,7 +67,8 @@ A query that joins a table to itself holds two table references to it.
 _Avoid_: table instance
 
 **Key**: An inferred claim that a set of columns identifies at most one row of its table.
-A table can have several keys, or none. ichnos never claims a primary key.
+A table can have several keys, or none.
+ichnos never claims a primary key.
 _Avoid_: primary key, unique key, candidate key, identifier
 
 **Relationship**: An inferred claim that columns of one table match columns of another table, or of the same table.
@@ -96,7 +97,8 @@ Identical query text counts once.
 _Avoid_: confidence, score, weight
 
 **Name match**: A column name that follows a key pattern for its table, such as `ID`, or `CUSTOMER_ID` in `CUSTOMERS`.
-It supports a key on its own. It is not evidence, because no query holds it, so it has no evidence count.
+It supports a key on its own.
+It is not evidence, because no query holds it, so it has no evidence count.
 _Avoid_: naming evidence, naming hint, naming convention
 
 **Observed value**: A literal that a query compares with a column by equality, or assigns to it.
