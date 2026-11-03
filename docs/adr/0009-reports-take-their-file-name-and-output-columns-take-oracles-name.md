@@ -22,7 +22,7 @@ ichnos raises an error that names both files when two reports get the same name.
 
 A report takes no owner, because it is not a database object.
 The inferred schema keeps reports apart from tables, so a report's name never compares with a table's name.
-A DBML `Dep` endpoint must be a `Table`, so [DBML output with evidence](https://github.com/ozanozbeker/ichnos/issues/12) decides how a report's DBML name stays clear of table names.
+A DBML `Dep` endpoint must be a `Table`, so DBML writes a report in the schema `report` ([ADR 0011](0011-dbml-evidence-as-custom-properties-in-one-file.md)).
 
 ## Queries that are not reports
 
