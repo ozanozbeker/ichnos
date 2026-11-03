@@ -26,11 +26,13 @@ _Avoid_: table definition, declared schema
 
 **Report**: A query that reads tables and writes none.
 It is never a table, because no other query can read it.
+It takes no owner.
+A query that reads only `DUAL` reads no table, so it is not a report.
 Two files that hold the same text are two reports.
 _Avoid_: asset, dashboard, output
 
-**Output column**: A column that a report returns, identified by its report and its position.
-Two output columns of one report can share a name.
+**Output column**: One position in a report's select list, under the name Oracle gives it.
+It is never a column, because a report is never a table.
 _Avoid_: report column, result column
 
 **Unparsed query**: A query that ichnos cannot read whole, or one that is not a `SELECT`, DML or a creating query.
