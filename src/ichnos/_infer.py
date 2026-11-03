@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         ColumnRef,
         Creation,
         Item,
+        KeyShape,
         Position,
         TableKey,
         TableKind,
@@ -73,8 +74,19 @@ class TableEvidence:
         default_factory=lambda: defaultdict(ColumnEvidence)
     )
     declarations: list[DeclarationEvidence] = field(default_factory=list)
+    # The queries behind each set of columns that a query's shape shows is a key, by shape (ADR 0006).
+    keys: defaultdict[tuple[str, ...], defaultdict[KeyShape, set[int]]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(set))
+    )
     complete: bool = False
     contradictions: list[Contradicting] = field(default_factory=list)
+
+    def add(self, name: str, position: Position, fact: Fact, index: int) -> None:
+        """Add one query's evidence for a column at one position."""
+        self.columns[name].references[position].add(index)
+        self.columns[name].add(fact, index)
+        if fact.generated:
+            self.keys[(name,)]["generated"].add(index)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,17 +120,15 @@ def combine(traces: Sequence[Trace]) -> Evidence:
         for ref in trace.refs:
             candidates = declarations.settle(ref)
             if len(candidates) == 1:
-                column = tables[candidates[0]].columns[ref.name]
-                column.references[ref.position].add(index)
-                column.add(ref.fact, index)
+                tables[candidates[0]].add(ref.name, ref.position, ref.fact, index)
             else:
                 # The reference gives evidence to no candidate (ADR 0001).
                 ambiguous[AmbiguousColumn(index, ref.name, candidates)] = None
         for write in trace.writes:
             for name, fact in declarations.mapped(write.table, write.values):
-                column = tables[write.table].columns[name]
-                column.references["insert"].add(index)
-                column.add(fact, index)
+                tables[write.table].add(name, "insert", fact, index)
+        for key in trace.keys:
+            tables[key.table].keys[key.columns][key.shape].add(index)
     declarations.record(tables)
     return Evidence(dict(tables), list(ambiguous))
 

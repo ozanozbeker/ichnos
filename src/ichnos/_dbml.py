@@ -6,7 +6,7 @@ The graph module holds the records, and this module turns them into text that `@
 import re
 from typing import TYPE_CHECKING
 
-from ichnos._graph import Ambiguity, Column, Graph, Table, count
+from ichnos._graph import Ambiguity, Column, Graph, Key, Table, count
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -85,12 +85,33 @@ def _table(table: Table) -> str:
             ("declared", count(table.declared)),
             ("read", count(table.read)),
             ("write", count(table.write)),
+            (
+                "keys",
+                "; ".join(f"{_key_label(k)}: {_key_basis(k)}" for k in table.keys),
+            ),
             ("contradicted", "; ".join(contradictions)),
             ("ambiguity", "; ".join(_ambiguity(a) for a in table.ambiguities)),
         ]
     )
-    columns = [_column(c) for c in table.columns] or ['  "*" unknown']
-    return f"Table {_table_name(table)}{settings} {{\n" + "\n".join(columns) + "\n}"
+    lines = [_column(c) for c in table.columns] or ['  "*" unknown']
+    if table.keys:
+        # ichnos never writes `pk`, because it never claims a primary key (ADR 0006).
+        indexes = (f"    {_key_label(k, quote=True)} [unique]" for k in table.keys)
+        lines += ["", "  indexes {", *indexes, "  }"]
+    return f"Table {_table_name(table)}{settings} {{\n" + "\n".join(lines) + "\n}"
+
+
+def _key_label(key: Key, *, quote: bool = False) -> str:
+    """Write a key's columns as one name, or as a parenthesized list for a composite key."""
+    names = [_name(c.name) if quote else c.name for c in key.columns]
+    return names[0] if len(names) == 1 else f"({', '.join(names)})"
+
+
+def _key_basis(key: Key) -> str:
+    """Write what supports a key: its name match and the count of each query shape."""
+    basis = [] if key.name_match is None else [f"name match {key.name_match}"]
+    basis += [f"{shape} {count(queries)}" for shape, queries in key.evidence.items()]
+    return ", ".join(basis)
 
 
 def _column(column: Column) -> str:

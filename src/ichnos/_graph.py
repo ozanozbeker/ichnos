@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from ichnos._infer import ContradictionReason
-    from ichnos._read import Position, TableKind, Type
+    from ichnos._read import KeyShape, Position, TableKind, Type
 
 
 class IchnosError(Exception):
@@ -209,6 +209,40 @@ class Contradiction:
     column: str | None
 
 
+type NameMatch = Literal["ID", "<S>_ID", "<S>_CODE"]
+
+
+@dataclass(frozen=True, slots=True)
+class Key:
+    """An inferred claim that a set of columns identifies at most one row of its table (ADR 0006).
+
+    ichnos never claims a primary key. A table can have several keys, such as a surrogate key and a business key.
+
+    Attributes
+    ----------
+    columns
+        The key's columns.
+    name_match
+        The pattern that the one column's name follows, such as `<S>_ID`, or `None`.
+        A name match supports a key on its own, and has no evidence count.
+    evidence
+        The queries behind each query shape that shows the key: `"generated"`, `"merge"`, `"single_row"` or `"grouped"`.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer({"q": "SELECT w.id, w.warehouse_code FROM inv.warehouses w"})
+    graph.tables[0].keys
+    ```
+    """
+
+    columns: tuple[Column, ...]
+    name_match: NameMatch | None = field(compare=False)
+    evidence: Mapping[KeyShape, tuple[Query, ...]] = field(compare=False, repr=False)
+
+
 @dataclass(frozen=True, slots=True)
 class Column:
     """A column of a table that some query references.
@@ -289,6 +323,8 @@ class Table:
         and every `*` in them expanded.
     contradictions
         The queries that contradict the declarations. With any, every declaration is contradicted.
+    keys
+        The table's keys, from name matches and from key evidence, with the shorter keys first.
     ambiguities
         Each ambiguity with the table among its candidates, and each owner ambiguity of a table with no owner.
 
@@ -312,6 +348,7 @@ class Table:
     kind: TableKind | None = field(compare=False, repr=False)
     complete: bool = field(compare=False, repr=False)
     contradictions: tuple[Contradiction, ...] = field(compare=False, repr=False)
+    keys: tuple[Key, ...] = field(compare=False, repr=False)
     ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
 
@@ -410,6 +447,43 @@ def infer(files: Mapping[str, str]) -> Graph:
 
 
 _TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+_SHAPES: tuple[KeyShape, ...] = ("generated", "merge", "single_row", "grouped")
+
+
+def _bare_name(name: str) -> str:
+    """Return a table's name without its database link, folded as Oracle folds an unquoted name."""
+    return name.split("@", 1)[0].upper()
+
+
+def _singulars(word: str) -> set[str]:
+    """Return a word and every singular of it: without a final S, without a final ES, and with a final IES as Y."""
+    found = {word}
+    if word.endswith("S"):
+        found.add(word[:-1])
+    if word.endswith("ES"):
+        found.add(word[:-2])
+    if word.endswith("IES"):
+        found.add(word[:-3] + "Y")
+    return found
+
+
+def _name_match(table: str, column: str, others: set[str]) -> NameMatch | None:
+    """Return the key pattern that a column's name follows for its table, or None (ADR 0006)."""
+    column = column.upper()
+    if column == "ID":
+        return "ID"
+    stems = _singulars(table)
+    if "_" in table:
+        last = _singulars(table.rsplit("_", 1)[1])
+        # `ROLE_ID` in `USER_ROLES` is a foreign key when a table `ROLES` exists.
+        if not last & {s for o in others for s in _singulars(o)}:
+            stems |= last
+    for stem in stems:
+        if column == f"{stem}_ID":
+            return "<S>_ID"
+        if column == f"{stem}_CODE":
+            return "<S>_CODE"
+    return None
 
 
 def _name(owner: str | None, *names: str) -> str:
@@ -546,6 +620,7 @@ class _Builder:
                 Contradiction(self.queries[index], reason, column)
                 for index, reason, column in evidence.contradictions
             ),
+            (),
             tuple(self.ambiguities[key]),
         )
         # Declared order first, then each other column by name (ADR 0011).
@@ -583,4 +658,33 @@ class _Builder:
         )
         # The records are frozen, and a column needs its table before the table can hold it.
         object.__setattr__(table, "columns", columns)
+        object.__setattr__(table, "keys", self._keys(table, evidence))
         return table
+
+    def _keys(self, table: Table, evidence: _infer.TableEvidence) -> tuple[Key, ...]:
+        by_name = {c.name: c for c in table.columns}
+        others = {
+            _bare_name(n)
+            for o, n in self.evidence.tables
+            if (o, n) != (table.owner, table.name)
+        }
+        found: dict[
+            tuple[str, ...], tuple[NameMatch | None, dict[KeyShape, tuple[Query, ...]]]
+        ] = {}
+        for column in table.columns:
+            match = _name_match(_bare_name(table.name), column.name, others)
+            if match is not None:
+                found[(column.name,)] = (match, {})
+        for names, shapes in evidence.keys.items():
+            match = found.get(names, (None, {}))[0]
+            found[names] = (
+                match,
+                {s: self.records(shapes[s]) for s in _SHAPES if s in shapes},
+            )
+        order = {c.name: i for i, c in enumerate(table.columns)}
+        return tuple(
+            Key(tuple(by_name[n] for n in names), match, shapes)
+            for names, (match, shapes) in sorted(
+                found.items(), key=lambda k: (len(k[0]), [order[n] for n in k[0]])
+            )
+        )

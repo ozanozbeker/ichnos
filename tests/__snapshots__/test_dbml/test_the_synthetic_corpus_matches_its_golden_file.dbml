@@ -8,10 +8,14 @@ Project ichnos {
   '''
 }
 
-Table CUSTOMERS [read: 1, ambiguity: '003_orders_comma_join_synonyms: CUSTOMERS may be SALES.CUSTOMERS (11)'] {
+Table CUSTOMERS [read: 1, keys: 'CUSTOMER_ID: name match <S>_ID', ambiguity: '003_orders_comma_join_synonyms: CUSTOMERS may be SALES.CUSTOMERS (11)'] {
   CUSTOMER_ID unknown [join: 1]
   CUSTOMER_NAME unknown [select: 1]
   CUSTOMER_TYPE text [select: 1, where: 1, text: 1, observed: 'TRADE']
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
 }
 
 Table EMP [read: 1] {
@@ -22,10 +26,14 @@ Table EMP [read: 1] {
   LAST_NAME unknown [select: 1]
 }
 
-Table ORDERS [read: 1, ambiguity: '003_orders_comma_join_synonyms: ORDERS may be SALES.ORDERS (20)'] {
+Table ORDERS [read: 1, keys: 'ORDER_ID: name match <S>_ID', ambiguity: '003_orders_comma_join_synonyms: ORDERS may be SALES.ORDERS (20)'] {
   CUSTOMER_ID unknown [join: 1]
   ORDER_DATE unknown [select: 1]
   ORDER_ID unknown [select: 1]
+
+  indexes {
+    ORDER_ID [unique]
+  }
 }
 
 Table ORDER_LINES [read: 1, ambiguity: '040_products_per_order: ORDER_LINES may be SALES.ORDER_LINES (9)'] {
@@ -34,25 +42,37 @@ Table ORDER_LINES [read: 1, ambiguity: '040_products_per_order: ORDER_LINES may 
   PRODUCT_ID unknown [join: 1]
 }
 
-Table PRODUCTS [read: 1, ambiguity: '040_products_per_order: PRODUCTS may be INV.PRODUCTS (7)'] {
+Table PRODUCTS [read: 1, keys: 'PRODUCT_ID: name match <S>_ID', ambiguity: '040_products_per_order: PRODUCTS may be INV.PRODUCTS (7)'] {
   PRODUCT_ID unknown [join: 1]
   SKU unknown [aggregate: 1]
+
+  indexes {
+    PRODUCT_ID [unique]
+  }
 }
 
-Table HR.DEPARTMENTS [read: 3] {
+Table HR.DEPARTMENTS [read: 3, keys: 'DEPARTMENT_ID: name match <S>_ID'] {
   DEPARTMENT_ID unknown [join: 2]
   DEPARTMENT_NAME unknown [select: 2, order_by: 1]
   LOCATION_COUNTRY text [where: 1, join: 1, text: 1, observed: 'DE']
   MANAGER_ID unknown [join: 1]
+
+  indexes {
+    DEPARTMENT_ID [unique]
+  }
 }
 
-Table HR.EMPLOYEES [read: 5] {
+Table HR.EMPLOYEES [read: 5, keys: 'EMPLOYEE_ID: name match <S>_ID'] {
   EMAIL text [join: 1, text: 1]
   EMPLOYEE_ID unknown [select: 3, join: 4]
   FIRST_NAME unknown [select: 1]
   LAST_NAME unknown [select: 5]
   MANAGER_ID unknown [join: 1]
   STATUS text [where: 1, text: 1, observed: 'A']
+
+  indexes {
+    EMPLOYEE_ID [unique]
+  }
 }
 
 Table HR.EMP_DIRECTORY [read: 1] {
@@ -63,7 +83,7 @@ Table HR.EMP_DIRECTORY [read: 1] {
   WORK_EMAIL unknown [select: 1]
 }
 
-Table INV.PRODUCTS [read: 7] {
+Table INV.PRODUCTS [read: 7, keys: 'PRODUCT_ID: name match <S>_ID'] {
   CATEGORY_ID unknown [select: 2, join: 1]
   CREATED_AT datetime [where: 1, datetime: 1]
   LIST_PRICE unknown [select: 1]
@@ -71,15 +91,23 @@ Table INV.PRODUCTS [read: 7] {
   PRODUCT_NAME unknown [select: 2]
   SKU unknown [select: 2]
   STATUS text [where: 2, text: 2, observed: 'ACTIVE']
+
+  indexes {
+    PRODUCT_ID [unique]
+  }
 }
 
-Table INV.PRODUCT_CATEGORIES [read: 3] {
+Table INV.PRODUCT_CATEGORIES [read: 3, keys: 'CATEGORY_ID: name match <S>_ID'] {
   CATEGORY_ID unknown [select: 2, join: 2]
   CATEGORY_NAME unknown [select: 3, group_by: 1, order_by: 1]
   PARENT_CATEGORY_ID unknown [null, where: 2, join: 2, nullable: 2]
+
+  indexes {
+    CATEGORY_ID [unique]
+  }
 }
 
-Table INV.SHIPMENTS [read: 3] {
+Table INV.SHIPMENTS [read: 3, keys: 'SHIPMENT_ID: name match <S>_ID, single_row 1'] {
   CARRIER unknown [select: 1]
   ORDER_ID unknown [select: 1]
   SHIPMENT_ID unknown [select: 1, where: 1, aggregate: 1]
@@ -87,6 +115,10 @@ Table INV.SHIPMENTS [read: 3] {
   STATUS text [where: 1, text: 1, observed: 'SHIPPED']
   TRACKING_NO unknown [select: 1]
   WAREHOUSE_ID unknown [select: 1, join: 1]
+
+  indexes {
+    SHIPMENT_ID [unique]
+  }
 }
 
 Table INV.SHIPMENT_LINES [read: 2] {
@@ -96,28 +128,41 @@ Table INV.SHIPMENT_LINES [read: 2] {
   SHIPMENT_ID unknown [where: 1]
 }
 
-Table INV.STOCK_LEVELS [read: 3, write: 2] {
+Table INV.STOCK_LEVELS [read: 3, write: 2, keys: '(PRODUCT_ID, WAREHOUSE_ID): merge 1'] {
   PRODUCT_ID unknown [select: 1, join: 2, insert: 1]
   QTY_ON_HAND number [select: 2, where: 1, insert: 1, set: 1, number: 1, observed: '0']
   REORDER_POINT unknown [select: 1, where: 1]
   UPDATED_AT datetime [insert: 1, set: 1, datetime: 2]
   WAREHOUSE_ID unknown [where: 1, join: 2, insert: 1]
+
+  indexes {
+    (PRODUCT_ID, WAREHOUSE_ID) [unique]
+  }
 }
 
-Table INV.WAREHOUSES [read: 3] {
+Table INV.WAREHOUSES [read: 3, keys: 'ID: name match ID; WAREHOUSE_CODE: name match <S>_CODE'] {
   COUNTRY_CODE unknown [join: 1]
   ID unknown [select: 1, join: 2]
   NAME unknown [select: 1]
   WAREHOUSE_CODE unknown [select: 2, group_by: 1]
+
+  indexes {
+    ID [unique]
+    WAREHOUSE_CODE [unique]
+  }
 }
 
-Table MART.CUSTOMER_DAILY_SALES [kind: 'base table', complete: true, declared: 1, read: 4, write: 1] {
+Table MART.CUSTOMER_DAILY_SALES [kind: 'base table', complete: true, declared: 1, read: 4, write: 1, keys: '(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE): merge 1, grouped 1'] {
   CUSTOMER_ID unknown [declared: 1, select: 2, join: 1, group_by: 1, insert: 1]
   SALES_DATE datetime [declared: 1, select: 1, where: 3, join: 1, group_by: 1, order_by: 1, aggregate: 1, insert: 1, datetime: 3]
   CURRENCY_CODE unknown [declared: 1, select: 1, join: 1, group_by: 1, insert: 1]
   LINE_COUNT number [declared: 1, aggregate: 1, insert: 1, set: 1, number: 2]
   UNITS number [declared: 1, insert: 1, set: 1, number: 1]
   NET_AMOUNT number [declared: 1, aggregate: 2, insert: 1, set: 1, number: 3]
+
+  indexes {
+    (CUSTOMER_ID, SALES_DATE, CURRENCY_CODE) [unique]
+  }
 }
 
 Table MART.CUSTOMER_SEGMENTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
@@ -127,16 +172,24 @@ Table MART.CUSTOMER_SEGMENTS [kind: 'base table', complete: true, declared: 1, r
   SEGMENT text [declared: 1, select: 2, where: 2, group_by: 1, set: 1, text: 3, observed: 'KEY, STRATEGIC']
 }
 
-Table MART.LAPSED_CUSTOMERS [kind: 'base table', complete: true, declared: 1, read: 1] {
+Table MART.LAPSED_CUSTOMERS [kind: 'base table', complete: true, declared: 1, read: 1, keys: 'CUSTOMER_ID: grouped 1'] {
   CUSTOMER_ID unknown [declared: 1, select: 1, join: 1]
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
 }
 
-Table MART.MV_CATEGORY_MONTHLY [kind: 'materialized view', complete: true, declared: 1, read: 1] {
+Table MART.MV_CATEGORY_MONTHLY [kind: 'materialized view', complete: true, declared: 1, read: 1, keys: '(SALES_MONTH, CATEGORY_NAME, CURRENCY_CODE): grouped 1'] {
   SALES_MONTH datetime [declared: 1, select: 1, order_by: 1, datetime: 1]
   CATEGORY_NAME unknown [declared: 1, select: 1, order_by: 1]
   CURRENCY_CODE text [declared: 1, where: 1, text: 1, observed: 'EUR']
   NET_AMOUNT number [declared: 1, select: 1, number: 1]
   ORDER_COUNT number [declared: 1, select: 1, number: 1]
+
+  indexes {
+    (SALES_MONTH, CATEGORY_NAME, CURRENCY_CODE) [unique]
+  }
 }
 
 Table MART.ORDER_LINE_FACTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
@@ -158,29 +211,45 @@ Table MART.V_KEY_CUSTOMERS [kind: 'view', complete: true, declared: 1, read: 1] 
   SEGMENT unknown [declared: 1]
 }
 
-Table REF.COUNTRIES [read: 3] {
+Table REF.COUNTRIES [read: 3, keys: 'COUNTRY_CODE: name match <S>_CODE'] {
   COUNTRY_CODE unknown [join: 3]
   COUNTRY_NAME unknown [select: 3, group_by: 1, order_by: 1]
+
+  indexes {
+    COUNTRY_CODE [unique]
+  }
 }
 
-Table REF.CURRENCIES [read: 1] {
+Table REF.CURRENCIES [read: 1, keys: 'CURRENCY_CODE: name match <S>_CODE'] {
   CURRENCY_CODE unknown [join: 1]
   CURRENCY_NAME unknown [select: 1, group_by: 1]
+
+  indexes {
+    CURRENCY_CODE [unique]
+  }
 }
 
-Table SALES.CUSTOMERS [read: 11, ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
+Table SALES.CUSTOMERS [read: 11, keys: 'CUSTOMER_ID: name match <S>_ID', ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
   ACCOUNT_MANAGER_ID unknown [join: 1]
   CREATED_AT datetime [select: 1, where: 1, datetime: 1]
   CUSTOMER_ID unknown [select: 6, join: 6, group_by: 1]
   CUSTOMER_NAME unknown [select: 8, group_by: 1, order_by: 1]
   EMAIL text [select: 3, where: 1, join: 1, group_by: 1, text: 1]
   STATUS text [where: 2, text: 2, observed: 'ACTIVE']
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
 }
 
-Table SALES.CUSTOMER_ADDRESSES [read: 1] {
+Table SALES.CUSTOMER_ADDRESSES [read: 1, keys: 'ADDRESS_ID: name match <S>_ID'] {
   ADDRESS_ID unknown [join: 1]
   CITY unknown [select: 1]
   COUNTRY_CODE unknown [where: 1, join: 1]
+
+  indexes {
+    ADDRESS_ID [unique]
+  }
 }
 
 Table SALES.MV_DAILY_SALES [read: 1] {
@@ -190,7 +259,7 @@ Table SALES.MV_DAILY_SALES [read: 1] {
   SALES_DATE unknown [select: 1, where: 1, order_by: 1]
 }
 
-Table SALES.ORDERS [read: 19, write: 1, ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
+Table SALES.ORDERS [read: 19, write: 1, keys: 'ORDER_ID: name match <S>_ID, generated 1', ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
   BILL_TO_ADDRESS_ID unknown [join: 1, insert: 1]
   CREATED_AT datetime [insert: 1, datetime: 1]
   CURRENCY_CODE unknown [select: 3, join: 1, insert: 1]
@@ -201,13 +270,21 @@ Table SALES.ORDERS [read: 19, write: 1, ambiguity: '016_unqualified_columns_in_j
   SALES_REP_ID number [null, select: 2, group_by: 1, insert: 1, number: 1, nullable: 1]
   SHIP_TO_ADDRESS_ID unknown [join: 1, insert: 1]
   STATUS text [select: 3, where: 6, insert: 1, text: 8, observed: 'CANCELLED, NEW, PAID, SHIPPED']
+
+  indexes {
+    ORDER_ID [unique]
+  }
 }
 
-Table SALES."ORDERS@ARCHIVE" [read: 1] {
+Table SALES."ORDERS@ARCHIVE" [read: 1, keys: 'ORDER_ID: name match <S>_ID'] {
   CUSTOMER_ID unknown [select: 1, where: 1]
   ORDER_DATE unknown [select: 1]
   ORDER_ID unknown [select: 1]
   ORDER_TOTAL unknown [select: 1]
+
+  indexes {
+    ORDER_ID [unique]
+  }
 }
 
 Table SALES.ORDER_LINES [read: 9, write: 1] {
@@ -224,7 +301,7 @@ Table SALES.ORDER_PROMOTIONS [read: 2] {
   PROMO_ID unknown [join: 2]
 }
 
-Table SALES.PAYMENTS [read: 4] {
+Table SALES.PAYMENTS [read: 4, keys: 'PAYMENT_ID: name match <S>_ID'] {
   AMOUNT number [select: 1, aggregate: 1, number: 1]
   CURRENCY_CODE unknown [join: 1]
   ExternalRef unknown [null, select: 1, where: 1, nullable: 1]
@@ -232,6 +309,10 @@ Table SALES.PAYMENTS [read: 4] {
   ORDER_ID unknown [join: 3]
   PAID_AT unknown [select: 1, aggregate: 1]
   PAYMENT_ID unknown [select: 1]
+
+  indexes {
+    PAYMENT_ID [unique]
+  }
 }
 
 Table SALES.PROMOTIONS [read: 2, write: 1] {

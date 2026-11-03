@@ -10,13 +10,15 @@ from ichnos._graph import (
     Declaration,
     Graph,
     IchnosError,
+    Key,
+    NameMatch,
     Query,
     Table,
     UnparsedQuery,
     infer,
 )
 from ichnos._infer import ContradictionReason
-from ichnos._read import Position, TableKind, Type
+from ichnos._read import KeyShape, Position, TableKind, Type
 
 __all__ = [
     "Ambiguity",
@@ -27,6 +29,9 @@ __all__ = [
     "Declaration",
     "Graph",
     "IchnosError",
+    "Key",
+    "KeyShape",
+    "NameMatch",
     "Position",
     "Query",
     "Table",

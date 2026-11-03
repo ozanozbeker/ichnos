@@ -45,6 +45,8 @@ class KeyTable:
     name: str
     kind: Literal["base table", "view", "materialized view"]
     columns: dict[str, KeyColumn] = field(default_factory=dict)
+    # Each primary key and unique constraint, as a set of column names.
+    keys: list[frozenset[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -108,7 +110,21 @@ def load() -> AnswerKey:
                 for c in schema.expressions
                 if isinstance(c, exp.ColumnDef)
             }
-            tables[key] = KeyTable(*key, "base table", columns)
+            keys = [
+                frozenset(
+                    _name(i)
+                    for i in (
+                        c.expressions
+                        if isinstance(c, exp.PrimaryKey)
+                        else c.this.expressions
+                    )
+                )
+                for constraint in schema.expressions
+                if isinstance(constraint, exp.Constraint)
+                for c in constraint.expressions
+                if isinstance(c, exp.PrimaryKey | exp.UniqueColumnConstraint)
+            ]
+            tables[key] = KeyTable(*key, "base table", columns, keys)
     # A view's column takes the type that sqlglot infers from the base tables.
     mapping = MappingSchema(
         {
@@ -197,6 +213,7 @@ def score_schema(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
     yield from _score_tables(graph, key, claimed)
     yield from _score_kinds(graph, key)
     yield from _score_types(graph, key)
+    yield from _score_keys(graph, key)
     yield from _score_ambiguities(graph, key, claimed)
     shown_tables, shown_columns = shown(key)
     for name in sorted(shown_tables - {t for t, c in claimed if not c}):
@@ -261,6 +278,30 @@ def _score_types(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
                 yield Deviation("type", subject, "extra")
             if truth is not None and column.nullable and truth.not_null:
                 yield Deviation("nullable", subject, "extra")
+
+
+def _score_keys(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
+    """Yield each key claim that matches no primary key or unique constraint, and each one that the claims miss."""
+    claimed: set[tuple[Name, frozenset[str]]] = set()
+    for table in graph.tables:
+        resolved = key.resolve(table.owner, table.name)
+        for claim in table.keys:
+            columns = [c.name for c in claim.columns]
+            if resolved is not None and frozenset(columns) in key.tables[resolved].keys:
+                claimed.add((resolved, frozenset(columns)))
+            else:
+                yield Deviation(
+                    "key",
+                    f"{dbml_name(table.owner, table.name)}({', '.join(columns)})",
+                    "extra",
+                )
+    for name, table in sorted(key.tables.items()):
+        for columns in table.keys:
+            if (name, columns) not in claimed:
+                ordered = [c for c in table.columns if c in columns]
+                yield Deviation(
+                    "key", f"{dbml_name(*name)}({', '.join(ordered)})", "miss"
+                )
 
 
 def _score_ambiguities(

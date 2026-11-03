@@ -24,6 +24,7 @@ type Position = Literal[
 type Statement = Literal["select", "insert", "update", "merge", "delete", "create"]
 type TableKind = Literal["base table", "view", "materialized view"]
 type Type = Literal["text", "number", "datetime", "interval"]
+type KeyShape = Literal["generated", "merge", "single_row", "grouped"]
 type Item = str | TableKey
 """One position of a select list: its name, or a table whose `*` the query alone cannot expand."""
 
@@ -70,6 +71,17 @@ class Fact:
     type: Type | None = None
     observed: tuple[str, ...] = ()
     nullable: bool = False
+    # The value is a sequence's NEXTVAL or SYS_GUID(), which gives `generated` key evidence (ADR 0006).
+    generated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class KeyEvidence:
+    """A set of columns that one query's shape shows identifies at most one row (ADR 0006)."""
+
+    table: TableKey
+    columns: tuple[str, ...]
+    shape: KeyShape
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +132,7 @@ class Trace:
     writes: tuple[Write, ...]
     creation: Creation | None
     refs: tuple[ColumnRef, ...]
+    keys: tuple[KeyEvidence, ...]
 
 
 def split(text: str) -> list[str]:
@@ -237,6 +250,8 @@ class _Scope:
     unaliased: dict[TableKey, _TableSource] = field(default_factory=dict)
     using: dict[str, list[_Source]] = field(default_factory=dict)
     aliases: set[str] = field(default_factory=set)
+    # The CTEs that a subquery anywhere in the scope can read.
+    ctes: dict[str, _LocalSource] = field(default_factory=dict)
 
 
 class _Walker:
@@ -249,11 +264,17 @@ class _Walker:
         self.refs: list[ColumnRef] = []
         # What a bare column learns from its parent expression, keyed by the column node's id.
         self.facts: dict[int, Fact] = {}
+        self.keys: list[KeyEvidence] = []
 
     def result(self, statement: Statement) -> Trace:
         reads = frozenset(self.reads)
         return Trace(
-            statement, reads, tuple(self.writes), self.creation, tuple(self.refs)
+            statement,
+            reads,
+            tuple(self.writes),
+            self.creation,
+            tuple(self.refs),
+            tuple(dict.fromkeys(self.keys)),
         )
 
     # --- statements ---------------------------------------------------------------------------
@@ -300,8 +321,16 @@ class _Walker:
     def merge(self, tree: exp.Merge) -> Statement:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
-        self._add_source(scope, tree.args["using"], {})
+        source = self._add_source(scope, tree.args["using"], {})
         self.expression(tree.args["on"], scope, "join")
+        target_source = (
+            _lookup(scope, target[0], target[1])
+            if tree.this.alias == ""
+            else scope.sources[_name(tree.this.args["alias"].this)]
+        )
+        compared = _compared(tree.args["on"], scope, target_source, source)
+        if compared:
+            self.keys.append(KeyEvidence(target, compared, "merge"))
         values: tuple[Value, ...] | None = None
         for when in tree.args["whens"].expressions:
             self.expression(when.args.get("condition"), scope, "where")
@@ -348,6 +377,9 @@ class _Walker:
         if len(types) != len(columns):
             types = (None,) * len(columns)
         self.creation = Creation(target, kind, columns, types)
+        grouped = _grouped(tree.expression, columns)
+        if grouped:
+            self.keys.append(KeyEvidence(target, grouped, "grouped"))
         return "create"
 
     def _target(self, scope: _Scope, node: exp.Table) -> TableKey:
@@ -440,7 +472,7 @@ class _Walker:
     def _select(
         self, node: exp.Select, parent: _Scope | None, ctes: dict[str, _LocalSource]
     ) -> _LocalSource:
-        scope = _Scope(parent)
+        scope = _Scope(parent, ctes=ctes)
         from_ = node.args.get("from_")
         if from_:
             self._add_source(scope, from_.this, ctes)
@@ -529,7 +561,8 @@ class _Walker:
             case None:
                 pass
             case exp.Query() | exp.Subquery():
-                self.query(node, scope, {})
+                self.query(node, scope, scope.ctes)
+                self._single_row(node, scope)
             case exp.Column():
                 self._column(node, scope, position)
             case exp.Window():
@@ -548,6 +581,33 @@ class _Walker:
                     self.facts[id(column)] = fact
                 for child in node.iter_expressions():
                     self.expression(child, scope, position)
+
+    def _single_row(self, node: exp.Expr, scope: _Scope) -> None:
+        """Record the key that a single-row subquery shows, because Oracle raises ORA-01427 when it returns two rows."""
+        parent = node.parent
+        many = isinstance(parent, exp.In | exp.Exists | exp.Any | exp.All)
+        if many or not isinstance(
+            parent, exp.Binary | exp.Alias | exp.Select | exp.Func
+        ):
+            return
+        select = _unparen(node.this if isinstance(node, exp.Subquery) else node)
+        if not isinstance(select, exp.Select) or select.args.get("joins"):
+            return
+        from_ = select.args.get("from_")
+        table = from_.this if from_ else None
+        if not isinstance(table, exp.Table) or _table_key(table)[1] == "DUAL":
+            return
+        shown = any(select.args.get(a) for a in ("group", "distinct", "limit", "with_"))
+        if shown or any(p.find(exp.AggFunc) for p in select.expressions):
+            return
+        if any(c.name.upper() == "ROWNUM" for c in select.find_all(exp.Column)):
+            return
+        inner = _Scope(scope)
+        source = self._add_source(inner, table, scope.ctes)
+        where = select.args.get("where")
+        compared = _compared(where and where.this, inner, source, None)
+        if compared and isinstance(source, _TableSource):
+            self.keys.append(KeyEvidence(source.key, compared, "single_row"))
 
     def _column(self, node: exp.Column, scope: _Scope, position: Position) -> None:
         if isinstance(node.this, exp.Star):
@@ -609,6 +669,86 @@ def _lookup(scope: _Scope, owner: str | None, qualifier: str) -> _Source:
         current = current.parent
     message = f"unknown table or alias {qualifier if owner is None else f'{owner}.{qualifier}'}"
     raise ReadError(message)
+
+
+def _conjuncts(node: exp.Expr) -> list[exp.Expr]:
+    node = _unparen(node)
+    if isinstance(node, exp.And):
+        return [*_conjuncts(node.this), *_conjuncts(node.expression)]
+    return [node]
+
+
+def _compared(
+    clause: exp.Expr | None, scope: _Scope, table: _Source, source: _Source | None
+) -> tuple[str, ...]:
+    """Return the columns of `table` that a clause compares, when every conjunct is a bare `=` to a key value.
+
+    A key value is a bind variable, a column of an outer query, or a column of `source`.
+    A literal, a range, `IS NULL`, a function or an `OR` can make the columns unique in part of the table only (ADR 0006).
+    """
+    if clause is None or not isinstance(table, _TableSource):
+        return ()
+    columns: list[str] = []
+    for conjunct in _conjuncts(clause):
+        if not isinstance(conjunct, exp.EQ):
+            return ()
+        sides = [
+            _side(_unparen(s), scope, table, source)
+            for s in conjunct.iter_expressions()
+        ]
+        column = next((s for s in sides if s not in {None, "value"}), None)
+        if column is None or "value" not in sides:
+            return ()
+        columns.append(column)
+    return tuple(dict.fromkeys(columns))
+
+
+def _side(
+    node: exp.Expr, scope: _Scope, table: _TableSource, source: _Source | None
+) -> str | None:
+    """Return a compared column of `table` by name, `"value"` for a key value, or None for anything else."""
+    if isinstance(node, exp.Placeholder):
+        return "value"
+    if not isinstance(node, exp.Column) or isinstance(node.this, exp.Star):
+        return None
+    owner = node.args.get("db")
+    qualifier = node.args.get("table")
+    if qualifier is None:
+        # An unqualified column belongs to `table` only when it is the scope's one source.
+        return _name(node.this) if list(scope.sources.values()) == [table] else None
+    # The walk has looked the qualifier up already, so it names a source.
+    found = _lookup(scope, _name(owner) if owner else None, _name(qualifier))
+    if found is table:
+        return _name(node.this)
+    outer = found not in scope.sources.values()
+    return "value" if outer or found is source else None
+
+
+def _grouped(query: exp.Expr, columns: tuple[Item, ...]) -> tuple[str, ...]:
+    """Return the declared columns that a creating query's rows are unique on (ADR 0006)."""
+    names = [c for c in columns if isinstance(c, str)]
+    if len(names) != len(columns):
+        return ()
+    query = _unparen(query)
+    if isinstance(query, exp.SetOperation):
+        # `UNION ALL` keeps repeated rows, and the other set operations remove them.
+        return tuple(names) if query.args.get("distinct") else ()
+    if not isinstance(query, exp.Select) or len(query.expressions) != len(names):
+        return ()
+    if query.args.get("distinct"):
+        return tuple(names)
+    group = query.args.get("group")
+    if group is None or any(
+        group.find(exp.Rollup, exp.Cube, exp.GroupingSets) for _ in [0]
+    ):
+        return ()
+    expressions = list(group.expressions)
+    return tuple(
+        name
+        for name, projection in zip(names, query.expressions, strict=True)
+        if (projection.this if isinstance(projection, exp.Alias) else projection)
+        in expressions
+    )
 
 
 def _holds(source: _Source, name: str) -> bool:
@@ -891,10 +1031,16 @@ def assigned(node: exp.Expr | None) -> Fact:
     """Return what a column learns from a value assigned to it."""
     node = None if node is None else _unparen(node)
     observed = _observed(node)
+    generated = (
+        isinstance(node, exp.Column)
+        and node.name.upper() == "NEXTVAL"
+        and bool(node.table)
+    ) or (isinstance(node, exp.Anonymous) and node.name.upper() == "SYS_GUID")
     return Fact(
         _fixed_type(node),
         () if observed is None else (observed,),
         isinstance(node, exp.Null),
+        generated,
     )
 
 
