@@ -1,8 +1,10 @@
 import re
+from typing import TYPE_CHECKING
 
 import answer_key
 
-import ichnos
+if TYPE_CHECKING:
+    import ichnos
 
 
 def test_the_answer_key_reads_every_table_view_synonym_and_link():
@@ -18,10 +20,8 @@ def test_the_answer_key_reads_every_table_view_synonym_and_link():
     assert key.links == {"ARCHIVE"}
 
 
-def test_every_schema_deviation_is_listed_with_its_reason():
-    found = set(
-        answer_key.score_schema(ichnos.read(answer_key.QUERIES), answer_key.load())
-    )
+def test_every_schema_deviation_is_listed_with_its_reason(synthetic: ichnos.Graph):
+    found = set(answer_key.score_schema(synthetic, answer_key.load()))
     listed = answer_key.schema_deviations()
     assert sorted(found - listed.keys(), key=str) == []
     assert sorted(listed.keys() - found, key=str) == []
@@ -30,11 +30,9 @@ def test_every_schema_deviation_is_listed_with_its_reason():
     )
 
 
-def test_every_lineage_deviation_is_listed_with_its_reason():
+def test_every_lineage_deviation_is_listed_with_its_reason(synthetic: ichnos.Graph):
     found = set(
-        answer_key.score_lineage(
-            ichnos.read(answer_key.QUERIES), answer_key.load(), {"DIRECT", "INDIRECT"}
-        )
+        answer_key.score_lineage(synthetic, answer_key.load(), {"DIRECT", "INDIRECT"})
     )
     listed = answer_key.lineage_deviations()
     assert sorted(found - listed.keys()) == []

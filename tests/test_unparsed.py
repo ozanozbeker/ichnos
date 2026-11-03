@@ -30,9 +30,12 @@ def test_a_later_step_that_raises_makes_the_query_unparsed():
     assert graph.unparsed[0].error == "unsupported query: VALUES"
 
 
-def test_a_statement_that_writes_a_query_is_unparsed():
+def test_a_statement_whose_target_is_an_inline_view_is_unparsed():
     graph = ichnos.infer({"f": "UPDATE (SELECT t.a FROM t) v SET v.a = 1"})
-    assert graph.unparsed[0].error == "the statement writes a query, not a table"
+    assert (
+        graph.unparsed[0].error
+        == "the statement's target is an inline view, not a table"
+    )
 
 
 def test_a_cte_names_an_expression_position_for_no_reference():

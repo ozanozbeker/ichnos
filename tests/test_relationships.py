@@ -122,3 +122,29 @@ def test_a_column_lookup_folds_an_unquoted_name():
     assert table.column('"Mixed"').name == "Mixed"
     with pytest.raises(KeyError):
         table.column("mixed")
+
+
+@pytest.mark.parametrize(
+    ("sql", "found"),
+    [
+        ("SELECT 1 FROM m.t x JOIN u y ON c = y.c_id", ["U(C_ID) <> T(C) 1"]),
+        (
+            "SELECT 1 FROM m.t x JOIN u y ON x.a = y.a AND c = y.c_id",
+            ["U(A, C_ID) <> T(A, C) 1"],
+        ),
+        (
+            "SELECT 1 FROM m.t x JOIN u y USING (c) JOIN w z USING (c)",
+            ["U(C) <> T(C) 1", "W(C) <> T(C) 1"],
+        ),
+        ("SELECT 1 FROM m.t x JOIN s.w y ON c = y.c_id", ["T(C) <> W(C_ID) 1"]),
+        ("SELECT 1 FROM v x, u y WHERE z = y.z", []),
+        ("SELECT 1 FROM m.t x, u y WHERE c = x.a", []),
+    ],
+)
+def test_a_column_that_a_declaration_settles_gives_relationship_evidence(
+    sql: str, found: list[str]
+):
+    graph = ichnos.infer(
+        {"c": "CREATE TABLE m.t AS SELECT s.a, s.b AS c FROM s", "q": sql}
+    )
+    assert _relationships(graph) == found

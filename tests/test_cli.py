@@ -1,3 +1,4 @@
+import os
 import runpy
 import subprocess
 import sys
@@ -20,19 +21,21 @@ def _run(capsys: pytest.CaptureFixture[str], *tokens: str) -> tuple[int, str, st
     return int(exit_.value.code or 0), out, err
 
 
-def test_dbml_writes_the_full_file_to_stdout(capsys: pytest.CaptureFixture[str]):
+def test_dbml_writes_the_full_file_to_stdout(
+    synthetic: ichnos.Graph, capsys: pytest.CaptureFixture[str]
+):
     code, out, err = _run(capsys, "dbml", str(answer_key.QUERIES))
     assert (code, err) == (0, "")
-    assert out == ichnos.dbml(ichnos.read(answer_key.QUERIES))
+    assert out == ichnos.dbml(synthetic)
 
 
 def test_dbml_writes_the_output_file(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+    synthetic: ichnos.Graph, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ):
     output = tmp_path / "schema.dbml"
     code, out, _ = _run(capsys, "dbml", str(answer_key.QUERIES), "-o", str(output))
     assert (code, out) == (0, "")
-    assert output.read_bytes() == ichnos.dbml(ichnos.read(answer_key.QUERIES)).encode()
+    assert output.read_bytes() == ichnos.dbml(synthetic).encode()
 
 
 @pytest.mark.parametrize(
@@ -57,6 +60,32 @@ def test_a_usage_error_exits_2(capsys: pytest.CaptureFixture[str]):
     code, _, err = _run(capsys, "dbml", str(answer_key.QUERIES), "--unknown")
     assert code == 2
     assert err
+
+
+def test_join_path_takes_two_or_more_tables(capsys: pytest.CaptureFixture[str]):
+    code, _, err = _run(capsys, "join-path", str(answer_key.QUERIES), "SALES.ORDERS")
+    assert code == 2
+    assert err
+
+
+def test_a_bug_exits_1_with_its_traceback():
+    # A KeyError inside a walk is a bug, because the CLI catches KeyError only around its lookups (ADR 0014).
+    script = f"""
+import sys
+from ichnos import _cli
+
+def walk(*args, **kwargs):
+    raise KeyError("inside a walk")
+
+_cli.Graph.neighborhood = walk
+sys.argv = ["ichnos", "neighborhood", {str(answer_key.QUERIES)!r}, "SALES.ORDERS"]
+_cli.main()
+"""
+    command = [sys.executable, "-c", script]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603 # runs ichnos itself
+    assert result.returncode == 1
+    assert result.stderr.startswith("Traceback (most recent call last):\n")
+    assert result.stderr.endswith("KeyError: 'inside a walk'\n")
 
 
 def test_main_runs_the_app(
@@ -120,16 +149,19 @@ def test_unparsed_lists_each_query_with_the_first_line_of_its_error(
     assert first == "a#2: not a SELECT, DML or a creating query: ALTER"
     # The rest of sqlglot's message names its own class path, which can move between releases.
     assert second.startswith("b: Required keyword: 'expression' missing")
-    code, out, err = _run(capsys, "dbml", str(tmp_path))
+    # The line names the path as given, with its trailing separator.
+    code, out, err = _run(capsys, "dbml", f"{tmp_path}{os.sep}")
     assert code == 0
     assert out.startswith("Project ichnos {")
     assert (
         err
-        == f"ichnos: 2 of 3 queries unparsed; run ichnos unparsed {tmp_path} to list them\n"
+        == f"ichnos: 2 of 3 queries unparsed; run ichnos unparsed {tmp_path}{os.sep} to list them\n"
     )
 
 
-def test_summary_mirrors_the_api(capsys: pytest.CaptureFixture[str]):
+def test_summary_mirrors_the_api(
+    synthetic: ichnos.Graph, capsys: pytest.CaptureFixture[str]
+):
     tokens = [
         "summary",
         str(answer_key.QUERIES),
@@ -142,7 +174,7 @@ def test_summary_mirrors_the_api(capsys: pytest.CaptureFixture[str]):
     ]
     code, out, err = _run(capsys, *tokens)
     assert (code, err) == (0, "")
-    assert out == ichnos.summary(ichnos.read(answer_key.QUERIES), "mart", "sales", 300)
+    assert out == ichnos.summary(synthetic, "mart", "sales", 300)
 
 
 def test_a_budget_below_one_is_a_usage_error(capsys: pytest.CaptureFixture[str]):
@@ -151,8 +183,10 @@ def test_a_budget_below_one_is_a_usage_error(capsys: pytest.CaptureFixture[str])
     assert err
 
 
-def test_neighborhood_and_join_path_mirror_the_api(capsys: pytest.CaptureFixture[str]):
-    graph = ichnos.read(answer_key.QUERIES)
+def test_neighborhood_and_join_path_mirror_the_api(
+    synthetic: ichnos.Graph, capsys: pytest.CaptureFixture[str]
+):
+    graph = synthetic
     code, out, err = _run(
         capsys,
         "neighborhood",
@@ -218,8 +252,10 @@ def test_a_core_over_the_budget_is_written_whole_with_one_stderr_line(
     )
 
 
-def test_upstream_and_downstream_mirror_the_api(capsys: pytest.CaptureFixture[str]):
-    graph = ichnos.read(answer_key.QUERIES)
+def test_upstream_and_downstream_mirror_the_api(
+    synthetic: ichnos.Graph, capsys: pytest.CaptureFixture[str]
+):
+    graph = synthetic
     report = graph.report("055_key_customers")
     cases = [
         (["upstream", "--report", "055_key_customers"], graph.upstream(report)),

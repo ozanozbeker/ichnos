@@ -8,6 +8,7 @@ Project ichnos {
   `complete: true` means the declarations list every column.
   A table with no `kind` may list only some of its columns.
   The schema `report` holds the reports, which are queries, not tables.
+  Cut to fit 2,850 characters: the example 023_copy_order_lines, the example 046_append_order_line_facts, the example 045_create_order_line_facts, the example 048_merge_customer_daily_sales, the example 047_create_customer_daily_sales, the example 051_promote_strategic_customers, the example 049_create_customer_segments, the example 054_segment_summary, the first hop's indirect dependencies.
   '''
 }
 
@@ -54,120 +55,6 @@ Dep: SALES.ORDER_LINES.DISCOUNT_PCT -> MART.ORDER_LINE_FACTS.NET_AMOUNT [transfo
 Dep: SALES.ORDER_LINES.QUANTITY -> MART.ORDER_LINE_FACTS.NET_AMOUNT [transformation: 2]
 Dep: SALES.ORDER_LINES.UNIT_PRICE -> MART.ORDER_LINE_FACTS.NET_AMOUNT [transformation: 2]
 Dep: INV.PRODUCTS.LIST_PRICE -> SALES.ORDER_LINES.UNIT_PRICE [identity: 1]
-Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> report."054_segment_summary" [sort: 1]
-Dep: MART.CUSTOMER_SEGMENTS.SEGMENT -> report."054_segment_summary" [group_by: 1]
 Dep: MART.CUSTOMER_SEGMENTS -> report."054_segment_summary".CUSTOMER_COUNT [aggregation: 1]
 Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> report."054_segment_summary".NET_AMOUNT [aggregation: 1]
 Dep: MART.CUSTOMER_SEGMENTS.SEGMENT -> report."054_segment_summary".SEGMENT [identity: 1]
-
-// 054_segment_summary
-// SELECT segment,
-//        COUNT(*) AS customer_count,
-//        SUM(net_amount_12m) AS net_amount
-//   FROM mart.customer_segments
-//  GROUP BY segment
-//  ORDER BY net_amount DESC
-
-// 049_create_customer_segments
-// CREATE TABLE mart.customer_segments AS
-// WITH totals AS (
-//   SELECT d.customer_id,
-//          SUM(d.net_amount) AS net_amount_12m,
-//          COUNT(DISTINCT d.sales_date) AS active_days
-//     FROM mart.customer_daily_sales d
-//    WHERE d.sales_date >= ADD_MONTHS(TRUNC(SYSDATE), -12)
-//    GROUP BY d.customer_id
-// )
-// SELECT c.customer_id,
-//        c.customer_name,
-//        t.net_amount_12m,
-//        CASE
-//          WHEN t.net_amount_12m >= 100000 THEN 'KEY'
-//          WHEN t.active_days >= 12 THEN 'REGULAR'
-//          ELSE 'OCCASIONAL'
-//        END AS segment
-//   FROM sales.customers c
-//   JOIN totals t ON t.customer_id = c.customer_id
-
-// 051_promote_strategic_customers
-// -- SEGMENT derives from itself and from another column of the same table.
-// UPDATE mart.customer_segments
-//    SET segment = CASE WHEN net_amount_12m >= 250000 THEN 'STRATEGIC' ELSE segment END
-//  WHERE segment = 'KEY'
-
-// 047_create_customer_daily_sales
-// CREATE TABLE mart.customer_daily_sales AS
-// SELECT f.customer_id,
-//        f.sales_date,
-//        f.currency_code,
-//        COUNT(*) AS line_count,
-//        SUM(f.units) AS units,
-//        SUM(f.net_amount) AS net_amount
-//   FROM mart.order_line_facts f
-//  GROUP BY f.customer_id, f.sales_date, f.currency_code
-
-// 048_merge_customer_daily_sales
-// -- The USING subquery names its columns differently from the target columns.
-// MERGE INTO mart.customer_daily_sales tgt
-// USING (SELECT f.customer_id,
-//               f.sales_date,
-//               f.currency_code,
-//               COUNT(*) AS lines_today,
-//               SUM(f.units) AS units_today,
-//               SUM(f.net_amount) AS amount_today
-//          FROM mart.order_line_facts f
-//         WHERE f.sales_date = TRUNC(SYSDATE)
-//         GROUP BY f.customer_id, f.sales_date, f.currency_code) src
-//    ON (tgt.customer_id = src.customer_id
-//        AND tgt.sales_date = src.sales_date
-//        AND tgt.currency_code = src.currency_code)
-//  WHEN MATCHED THEN
-//    UPDATE SET tgt.line_count = src.lines_today,
-//               tgt.units = src.units_today,
-//               tgt.net_amount = src.amount_today
-//  WHEN NOT MATCHED THEN
-//    INSERT (customer_id, sales_date, currency_code, line_count, units, net_amount)
-//    VALUES (src.customer_id, src.sales_date, src.currency_code,
-//            src.lines_today, src.units_today, src.amount_today)
-
-// 045_create_order_line_facts
-// CREATE TABLE mart.order_line_facts AS
-// SELECT o.order_id,
-//        ol.line_no,
-//        o.customer_id,
-//        TRUNC(o.order_date) AS sales_date,
-//        o.currency_code,
-//        ol.product_id,
-//        p.category_id,
-//        ol.quantity AS units,
-//        ol.quantity * ol.unit_price * (1 - NVL(ol.discount_pct, 0) / 100) AS net_amount
-//   FROM sales.orders o
-//   JOIN sales.order_lines ol ON ol.order_id = o.order_id
-//   JOIN inv.products p ON p.product_id = ol.product_id
-//  WHERE o.status <> 'CANCELLED'
-
-// 046_append_order_line_facts
-// -- No column list: the values map to the columns in the order that 045 declares.
-// INSERT INTO mart.order_line_facts
-// SELECT o.order_id,
-//        ol.line_no,
-//        o.customer_id,
-//        TRUNC(o.order_date),
-//        o.currency_code,
-//        ol.product_id,
-//        p.category_id,
-//        ol.quantity,
-//        ol.quantity * ol.unit_price * (1 - NVL(ol.discount_pct, 0) / 100)
-//   FROM sales.orders o
-//   JOIN sales.order_lines ol ON ol.order_id = o.order_id
-//   JOIN inv.products p ON p.product_id = ol.product_id
-//  WHERE o.status <> 'CANCELLED'
-//    AND o.order_date >= TRUNC(SYSDATE)
-
-// 023_copy_order_lines
-// INSERT INTO sales.order_lines (order_id, line_no, product_id, quantity, unit_price)
-// SELECT :new_order_id, src.line_no, src.product_id, src.quantity, p.list_price
-//   FROM sales.order_lines src
-//   JOIN inv.products p ON p.product_id = src.product_id
-//  WHERE src.order_id = :source_order_id
-//    AND p.status = 'ACTIVE'

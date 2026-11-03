@@ -34,7 +34,8 @@ ichnos join-path queries SALES.ORDERS SALES.PRODUCTS
 
 The path is a folder or one file.
 `read` reads a file given as the path whatever its suffix.
-The CLI types the path as a plain `Path`, not cyclopts's `ExistingPath`, so a missing path exits 1 with the other user errors, not 2.
+The CLI types the path as a plain `str`, not cyclopts's `ExistingPath`, so a missing path exits 1 with the other user errors, not 2.
+A `str` also keeps the path as given, which the unparsed line on stderr names.
 
 ## Which files `read` reads
 

@@ -7,7 +7,7 @@ The summary is plain text, not DBML, because DBML raises on a table with no colu
 from typing import TYPE_CHECKING
 
 from ichnos._dbml import BUDGET, report_name, table_name
-from ichnos._graph import Graph, Report, Table, count
+from ichnos._graph import Graph, Report, Table, count, fold
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -57,7 +57,7 @@ def summary(
     print(ichnos.summary(graph, keyword="paid"))
     ```
     """
-    folded = None if owner is None else _fold(owner)
+    folded = None if owner is None else fold(owner)
     lines: list[tuple[str, int]] = []
     for table in graph.tables:
         if folded is not None and table.owner != folded:
@@ -65,7 +65,10 @@ def summary(
         found = _table_matches(table, keyword)
         if found is not None:
             lines.append(
-                (_table_line(graph, table, found), count((*table.read, *table.write)))
+                (
+                    _table_line(graph, table, found),
+                    count(table.read) + count(table.write),
+                )
             )
     for report in graph.reports:
         tables = [t for t in graph.tables if report.query in t.read]
@@ -75,12 +78,6 @@ def summary(
         if found is not None:
             lines.append((_report_line(report, tables, found), 1))
     return _fit(graph, owner, keyword, lines, budget)
-
-
-def _fold(name: str) -> str:
-    if len(name) > 1 and name.startswith('"') and name.endswith('"'):
-        return name[1:-1]
-    return name.upper()
 
 
 def _fit(
@@ -179,9 +176,9 @@ def _table_line(graph: Graph, table: Table, matches: list[str]) -> str:
 
 def _report_line(report: Report, tables: Iterable[Table], matches: list[str]) -> str:
     line = f"{report_name(report)}: report, {_columns(len(report.output_columns))}"
-    sources = sorted(table_name(t) for t in tables)
-    if sources:
-        line += f"; from {', '.join(sources)}"
+    names = sorted(table_name(t) for t in tables)
+    if names:
+        line += f"; from {', '.join(names)}"
     return line + _matches(matches)
 
 

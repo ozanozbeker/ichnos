@@ -672,6 +672,7 @@ c = [
 dev = [
     { name = "coverage" },
     { name = "hypothesis" },
+    { name = "ichnos", extra = ["c"] },
     { name = "prek" },
     { name = "pyrefly" },
     { name = "pytest" },
@@ -696,6 +697,7 @@ provides-extras = ["c"]
 dev = [
     { name = "coverage", specifier = ">=7.17.0" },
     { name = "hypothesis", specifier = ">=6.170.12" },
+    { name = "ichnos", extras = ["c"] },
     { name = "prek", specifier = ">=0.5.7" },
     { name = "pyrefly", specifier = ">=1.4.0" },
     { name = "pytest", specifier = ">=9.1.1" },

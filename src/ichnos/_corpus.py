@@ -1,6 +1,6 @@
 """Read a corpus from disk, decoding each file on its own, and build its graph with `infer`.
 
-The graph module builds a graph from text, and this module decides which files that text comes from (ADR 0014).
+The graph module builds a graph from text, and this module picks which files that text comes from (ADR 0014).
 One corpus can mix files from several Windows editors, so a fixed rule, not the locale, picks each file's codec.
 """
 
@@ -47,6 +47,8 @@ def read(
     ------
     IchnosError
         When the folder holds no matching file, two files give one key, a file does not decode, or `encoding` names no codec.
+    OSError
+        When `path` does not exist or a file cannot be read.
 
     Examples
     --------

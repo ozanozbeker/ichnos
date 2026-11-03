@@ -4,6 +4,7 @@ The graph module holds the records, and this module turns them into text that `@
 """
 
 import re
+import typing
 from collections import defaultdict
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, overload
@@ -22,35 +23,38 @@ from ichnos._graph import (
     Slice,
     Table,
     count,
+    holder,
 )
+from ichnos._read import DIRECT, Position, Type
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
     from ichnos._graph import Query
-    from ichnos._read import Position, Type
 
-_POSITIONS: tuple[Position, ...] = (
-    "select",
-    "where",
-    "join",
-    "group_by",
-    "order_by",
-    "aggregate",
-    "insert",
-    "set",
-)
+_POSITIONS: tuple[Position, ...] = typing.get_args(Position.__value__)
 # The escape table from issue 20, for every quoted name and string.
 _ESCAPES = str.maketrans(
     {"\\": "\\\\", '"': '\\"', "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 )
 type Detail = Literal["compact", "full"]
+"""How many counts a slice writes: `compact` drops each column's position and type counts (ADR 0012).
+
+Examples
+--------
+```python
+import typing
+
+import ichnos
+
+typing.get_args(ichnos.Detail.__value__)
+```
+"""
 
 BUDGET = 8000
 """The default budget in characters: the only prompt size that Microsoft documents for Copilot Chat."""
 
-_TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
-_DIRECT = frozenset({"IDENTITY", "TRANSFORMATION", "AGGREGATION"})
+_TYPES: tuple[Type, ...] = typing.get_args(Type.__value__)
 # Only a quoted lowercase Oracle owner can take this name, and `dbml` raises on one.
 _REPORTS = "report"
 # The output lists at most this many observed values, and only their number above it (ADR 0003).
@@ -91,6 +95,7 @@ def dbml(
         `"full"` writes every count, as the full file does.
     examples
         Whether a slice ends with example queries as `//` comments, which count against the budget.
+        The default is `False`.
 
     Returns
     -------
@@ -152,52 +157,23 @@ def _deps(graph: Graph) -> list[str]:
     for rollup in graph.rollups:
         rollups[rollup.downstream].append(rollup)
     for downstream, found in rollups.items():
-        lines: list[str] = []
-        for rollup in found:
-            # A dependency stored between two tables shares its rollup's edge (ADR 0011).
-            stored = next(
-                (
-                    d
-                    for d in rollup.dependencies
-                    if d.downstream is downstream and d.upstream is rollup.upstream
-                ),
-                None,
-            )
-            counts = [("queries", count(rollup.queries))]
-            counts += [
-                (s.lower(), count(q))
-                for s, q in (stored.subtypes.items() if stored else ())
-            ]
-            lines.append(
-                f"Dep: {_endpoint_of(rollup.upstream)} -> {_endpoint_of(downstream)}{_settings(counts)}"
-            )
-        for dependency in graph.dependencies:
-            stored = (
-                isinstance(dependency.upstream, Table)
-                and dependency.downstream is downstream
-            )
-            if (
-                _holder(dependency.downstream) is not downstream
-                or stored
-                or dependency.upstream == dependency.downstream
-            ):
-                continue
-            counts = [(s.lower(), count(q)) for s, q in dependency.subtypes.items()]
-            lines.append(
-                f"Dep: {_endpoint_of(dependency.upstream)} -> {_endpoint_of(dependency.downstream)}{_settings(counts)}"
-            )
+        lines = [_rollup(r) for r in found]
+        lines += [
+            _dep(d)
+            for d in graph.dependencies
+            if holder(d.downstream) is downstream
+            and not _stored(d)
+            and d.upstream != d.downstream
+        ]
         groups.append("\n".join(lines))
     return groups
 
 
-def _holder(end: Table | Column | Report | OutputColumn) -> Table | Report:
-    match end:
-        case Column():
-            return end.table
-        case OutputColumn():
-            return end.report
-        case _:
-            return end
+def _stored(dependency: Dependency) -> bool:
+    """Return whether a dependency joins two holders, so it shares its rollup's line (ADR 0011)."""
+    return isinstance(dependency.upstream, Table) and isinstance(
+        dependency.downstream, Table | Report
+    )
 
 
 def _endpoint_of(end: Table | Column | Report | OutputColumn) -> str:
@@ -217,7 +193,7 @@ def _report(report: Report, columns: Sequence[OutputColumn] | None = None) -> st
     """Write a report as a table in the schema `report`, because a `Dep` endpoint must be a table (ADR 0009)."""
     kept = report.output_columns if columns is None else columns
     lines = [
-        f"  {_name(c.name)} {_name('|'.join(t for t in _TYPES if t in c.types) or 'unknown')}"
+        f"  {_name(c.name)} {_name(_written_type(c))}"
         f"{_settings([('ambiguity', '; '.join(_ambiguity(a) for a in c.ambiguities))])}"
         for c in kept
     ] or ['  "*" unknown']
@@ -235,7 +211,7 @@ def _ref(relationship: Relationship) -> str:
         key = relationship.shared
         name += f", shared reference to {table_name(key.columns[0].table)}.{_key_label(key)}"
     return (
-        f"Ref {_name_quoted(name)}: {_endpoint(first)} {operator} {_endpoint(second)}"
+        f"Ref {_name_quoted(name)}: {_ref_side(first)} {operator} {_ref_side(second)}"
     )
 
 
@@ -244,7 +220,7 @@ def _keyed(columns: tuple[Column, ...]) -> bool:
     return any({c.name for c in k.columns} == names for k in columns[0].table.keys)
 
 
-def _endpoint(columns: tuple[Column, ...]) -> str:
+def _ref_side(columns: tuple[Column, ...]) -> str:
     table = table_name(columns[0].table)
     names = [_name(c.name) for c in columns]
     return f"{table}.{names[0]}" if len(names) == 1 else f"{table}.({', '.join(names)})"
@@ -254,12 +230,9 @@ def _note(graph: Graph) -> list[str]:
     """Return the full file's note, which explains every mark it can hold (ADR 0011)."""
     return [
         f"Inferred by ichnos from {len(graph.queries)} queries, with no database connection.",
-        "Counts are distinct queries. A column with no type evidence has the type `unknown`.",
-        "A column with evidence for two types writes both, such as `text|number`, an ambiguity.",
-        "`null` claims a column can hold NULL. ichnos never claims NOT NULL.",
-        "`>?` means the left side refers to a key on the right. `?<>?` means the direction is unknown.",
-        "`?-?` joins two keys. Each key is a unique index, because ichnos never claims a primary key.",
-        "The schema `report` holds the reports, which are queries, not tables.",
+        "Counts are distinct queries.",
+        *_LEGEND.values(),
+        "Each key is a unique index, because ichnos never claims a primary key.",
     ]
 
 
@@ -317,15 +290,24 @@ def _key_basis(key: Key) -> str:
     return ", ".join(basis)
 
 
+def _written_type(column: Column | OutputColumn) -> str:
+    """Write a column's type: its one declared type, else every type it has evidence for, else `unknown` (ADR 0007)."""
+    declared = (
+        {
+            d.types[column.name]
+            for d in column.table.declarations
+            if column.name in d.types
+        }
+        if isinstance(column, Column)
+        else set()
+    )
+    if len(declared) == 1:
+        return declared.pop()
+    return "|".join(t for t in _TYPES if t in column.types) or "unknown"
+
+
 def _column(column: Column, detail: Detail = "full") -> str:
-    types = [t for t in _TYPES if t in column.types]
-    declared = {
-        d.types[column.name]
-        for d in column.table.declarations
-        if column.name in d.types
-    }
-    # A declared column takes its declared type outright, and two types are an ambiguity (ADR 0007).
-    type_ = declared.pop() if len(declared) == 1 else "|".join(types) or "unknown"
+    type_ = _written_type(column)
     observed = list(column.observed)
     settings: list[tuple[str, int | str | bool]] = [
         ("declared", count(column.declared))
@@ -415,8 +397,7 @@ def _name(name: str) -> str:
     return name if _BARE.fullmatch(name) else f'"{name.translate(_ESCAPES)}"'
 
 
-# --- slices (ADR 0012) -----------------------------------------------------------------------
-
+# Each legend line explains one mark, and a slice's header holds the lines for the marks it writes (ADR 0012).
 _LEGEND = {
     "unknown": "A column with no type evidence has the type `unknown`.",
     "|": "A column with evidence for two types writes both, such as `text|number`, an ambiguity.",
@@ -511,7 +492,7 @@ class _Slicer:
 
     def _header(self, marks: set[str], core: int | None) -> str:
         found = self.slice
-        names = ", ".join(_end_name(s) for s in found.starts)
+        names = ", ".join(_endpoint_of(s) for s in found.starts)
         total = len(found.graph.tables)
         tables = len([t for t in found.distances if isinstance(t, Table)])
         match found.kind:
@@ -540,7 +521,7 @@ class _Slicer:
                 f"The core is {core:,} characters, over the {self.budget:,}-character budget."
             )
         outside = [
-            f"{label} {', '.join(_end_name(e) for e in ends)}."
+            f"{label} {', '.join(_endpoint_of(e) for e in ends)}."
             for key, label in (
                 ("joins", "Outside the slice, these tables join it:"),
                 ("upstream", "Upstream of the centers:"),
@@ -549,7 +530,7 @@ class _Slicer:
             if (ends := found.outside.get(key))
         ]
         if found.unconnected:
-            unconnected = ", ".join(_end_name(t) for t in found.unconnected)
+            unconnected = ", ".join(_endpoint_of(t) for t in found.unconnected)
             outside.append(f"No relationship connects {unconnected}.")
         return _project([*lines, *outside])
 
@@ -567,7 +548,7 @@ class _Slicer:
             (t for t in self.kept if isinstance(t, Table) and t not in found.starts),
             key=lambda t: (
                 -found.distances[t],
-                count((*t.read, *t.write)),
+                count(t.read) + count(t.write),
                 [-ord(c) for c in table_name(t)],
             ),
         )
@@ -588,7 +569,7 @@ class _Slicer:
         """Return the dependencies whose near end is the start, its columns, or its table or report."""
         found = self.slice
         start = found.starts[0]
-        starts: set[object] = {start, _holder(start)}
+        starts: set[object] = {start, holder(start)}
         if isinstance(start, Table | Report):
             starts |= set(found.columns.get(start, ()))
         if found.kind == "upstream":
@@ -603,7 +584,7 @@ class _Slicer:
             if dependency not in first or not dependency.indirect:
                 kept.append(dependency)
                 continue
-            direct = {s: q for s, q in dependency.subtypes.items() if s in _DIRECT}
+            direct = {s: q for s, q in dependency.subtypes.items() if s in DIRECT}
             if direct:
                 kept.append(replace(dependency, subtypes=direct))
         self.dependencies = kept
@@ -612,22 +593,22 @@ class _Slicer:
         self.kept = {
             h: tuple(c for c in cs if c in ends or isinstance(h, Report))
             for h, cs in self.kept.items()
-            if any(e is h or _holder(e) is h for e in ends)
+            if any(e is h or holder(e) is h for e in ends)
         }
         self.cut.append("the first hop's indirect dependencies")
 
     def _hop_queries(self) -> list[Query]:
         """Return the queries that write each hop, nearest hop first (ADR 0012)."""
         upstream = self.slice.kind == "upstream"
-
-        def hop(dependency: Dependency) -> int:
-            near = dependency.downstream if upstream else dependency.upstream
-            return self.slice.distances.get(_holder(near), 0)
-
-        ordered = sorted(self.dependencies, key=hop)
-        return list(
-            dict.fromkeys(q for d in ordered for qs in d.subtypes.values() for q in qs)
-        )
+        hops = [
+            (d.downstream if upstream else d.upstream, q)
+            for d in self.dependencies
+            for qs in d.subtypes.values()
+            for q in qs
+        ]
+        hops += [(r.upstream, q) for r in self.slice.rollups for q in r.queries]
+        hops.sort(key=lambda hop: self.slice.distances.get(holder(hop[0]), 0))
+        return list(dict.fromkeys(q for _, q in hops))
 
     def _drop_example(self, query: Query) -> Callable[[], None]:
         def cut() -> None:
@@ -652,11 +633,14 @@ class _Slicer:
 
 
 def _rollup(rollup: Rollup) -> str:
+    """Write a rollup's line, with the subtype counts of the dependency it shares the line with."""
+    stored = next((d for d in rollup.dependencies if _stored(d)), None)
     counts = [("queries", count(rollup.queries))]
-    upstream, downstream = (
-        _endpoint_of(rollup.upstream),
-        _endpoint_of(rollup.downstream),
-    )
+    counts += [
+        (s.lower(), count(q)) for s, q in (stored.subtypes.items() if stored else ())
+    ]
+    upstream = _endpoint_of(rollup.upstream)
+    downstream = _endpoint_of(rollup.downstream)
     return f"Dep: {upstream} -> {downstream}{_settings(counts)}"
 
 
@@ -687,14 +671,9 @@ def _marks(table: Table, columns: Sequence[Column]) -> set[str]:
     marks = set() if table.kind is not None else {"partial"}
     marks |= {"complete"} if table.complete else set()
     for column in columns:
-        types = [t for t in _TYPES if t in column.types]
-        declared = {
-            d.types[column.name] for d in table.declarations if column.name in d.types
-        }
-        if not declared and not types:
-            marks.add("unknown")
-        if len(declared) != 1 and len(types) > 1:
-            marks.add("|")
+        type_ = _written_type(column)
+        marks |= {"unknown"} if type_ == "unknown" else set()
+        marks |= {"|"} if "|" in type_ else set()
         marks |= {"null"} if column.nullable else set()
         marks |= {"undeclared"} if column.undeclared else set()
     return marks
@@ -706,11 +685,6 @@ def _operator(relationship: Relationship) -> str:
     if relationship.direction is not None:
         return ">?"
     return "?-?" if _keyed(first) and _keyed(second) else "?<>?"
-
-
-def _end_name(end: Table | Column | Report | OutputColumn) -> str:
-    """Write a slice's start or outside end as the DBML text names it."""
-    return _endpoint_of(end)
 
 
 def _order(table: Table) -> tuple[str, str]:

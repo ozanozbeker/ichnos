@@ -1,6 +1,6 @@
-"""Map each query's flows to dependencies between tables, columns, reports and output columns (ADR 0010).
+"""Map each query's derivations to dependencies between tables, columns, reports and output columns (ADR 0010).
 
-`_read` traces each query's flows over its own scopes, and this module applies what `_infer` combines across queries.
+`_read` traces each query's derivations over its own scopes, and this module applies what `_infer` combines across queries.
 A declaration expands a `*` and maps an `INSERT` with no column list, and a settled reference names its upstream column.
 """
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from ichnos._infer import Declarations, Evidence, ReportEvidence
-    from ichnos._read import ColumnRef, Flow, Subtype, TableKey, Trace
+    from ichnos._read import ColumnRef, Derivation, Subtype, TableKey, Trace
 
 type End = (
     tuple[Literal["table"], TableKey]
@@ -44,22 +44,22 @@ class Lineage:
 
 
 def lineage(traces: Sequence[Trace], evidence: Evidence) -> Lineage:
-    """Combine the flows of every query into dependencies."""
+    """Combine the derivations of every query into dependencies."""
     mapper = _Mapper(evidence.declarations, {r.index: r for r in evidence.reports})
     dependencies: defaultdict[tuple[End, End], defaultdict[Subtype, set[int]]] = (
         defaultdict(lambda: defaultdict(set))
     )
     ambiguous: dict[AmbiguousDependency, None] = {}
     for index, trace in enumerate(traces):
-        for flow in trace.flows:
-            for upstream, downstream in mapper.ends(index, trace, flow):
+        for derivation in trace.derivations:
+            for upstream, downstream in mapper.ends(index, trace, derivation):
                 if isinstance(upstream, _Unsettled):
                     found = AmbiguousDependency(
                         index, downstream, upstream.name, upstream.candidates
                     )
                     ambiguous[found] = None
                 else:
-                    dependencies[upstream, downstream][flow.subtype].add(index)
+                    dependencies[upstream, downstream][derivation.subtype].add(index)
     return Lineage({k: dict(v) for k, v in dependencies.items()}, list(ambiguous))
 
 
@@ -72,7 +72,7 @@ class _Unsettled:
 
 
 class _Mapper:
-    """Map a flow's ends through the declarations and the reports' output columns."""
+    """Map a derivation's ends through the declarations and the reports' output columns."""
 
     def __init__(
         self, declarations: Declarations, reports: dict[int, ReportEvidence]
@@ -81,11 +81,11 @@ class _Mapper:
         self.reports = reports
 
     def ends(
-        self, index: int, trace: Trace, flow: Flow
+        self, index: int, trace: Trace, derivation: Derivation
     ) -> list[tuple[End | _Unsettled, End]]:
-        """Return each pair of ends that a flow gives."""
-        names, fallback = self._downstream(index, trace, flow)
-        upstream = flow.upstream
+        """Return each pair of ends that a derivation gives."""
+        names, fallback = self._downstream(index, trace, derivation)
+        upstream = derivation.upstream
         if isinstance(upstream, Whole) and upstream.star:
             columns = self.declarations.columns(upstream.table)
             if columns is not None and names is not None and len(names) == len(columns):
@@ -108,22 +108,22 @@ class _Mapper:
         return ("column", candidates[0], upstream.name)
 
     def _downstream(
-        self, index: int, trace: Trace, flow: Flow
+        self, index: int, trace: Trace, derivation: Derivation
     ) -> tuple[tuple[End, ...] | None, End]:
-        """Return the ends of a flow's item, one per column it writes, and the one end the flow takes otherwise."""
-        if flow.table is None:
-            if flow.position is None:
+        """Return the ends of a derivation's item, one per column it writes, and the one end the derivation takes otherwise."""
+        if derivation.table is None:
+            if derivation.position is None:
                 return None, ("report", index)
-            names = self.reports[index].items[flow.position]
+            names = self.reports[index].items[derivation.position]
             outputs: tuple[End, ...] = tuple(("output", index, n) for n in names)
             return outputs, outputs[0] if len(outputs) == 1 else ("report", index)
-        table = flow.table
-        if flow.column is not None:
-            return None, ("column", table, flow.column)
-        if flow.position is None:
+        table = derivation.table
+        if derivation.column is not None:
+            return None, ("column", table, derivation.column)
+        if derivation.position is None:
             # A clause of the query selects which rows it writes (ADR 0010).
             return None, ("table", table)
-        names = self._item(trace, table, flow.position)
+        names = self._item(trace, table, derivation.position)
         if names is None:
             # A value that maps to no column depends on the written table (ADR 0010).
             return None, ("table", table)

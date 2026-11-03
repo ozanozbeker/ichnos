@@ -41,7 +41,7 @@ Its note holds these lines, in this order:
 
 1. What was asked: the slice kind, its start, its depth, and "N of M tables".
 2. "Inferred from N queries, with no database connection."
-3. A legend line for each mark that appears in the slice, such as `unknown`, `"text|number"`, `null`, `>?`, `?<>?`, `complete`, `undeclared` and the schema `report`.
+3. A legend line for each mark that appears in the slice, such as `unknown`, `"text|number"`, `null`, `>?`, `?<>?`, `?-?`, `complete`, `undeclared` and the schema `report`.
    A slice that holds a table with no `kind` adds the line that says such a table may list only some of its columns.
 4. Every name the budget cut, and the core's size when the core exceeds the budget.
 5. The outside names that **Neighborhood** and **Join path** list.
@@ -154,10 +154,12 @@ On the prototype, a line costs 61 characters, so 8,000 characters hold about 130
 Adding each table's upstream and downstream tables would raise that to 96, and a lineage slice answers that question.
 
 The summary takes an owner filter and a keyword filter.
+The owner filter keeps that owner's tables and each report that reads one of them.
 The keyword filter keeps each table whose name, column names or observed values contain the keyword, ignoring case.
-Each kept line adds `matches` and the matching columns, such as `matches STATUS ('A')`.
+Each kept line adds `matches` and the matching columns, such as `matches STATUS ('A')`, and a match on the name adds `name`.
 A report matches on its name and its output column names.
-Over the budget, the summary cuts the lines with the lowest `read` plus `write` first, and its first line says how many it cut and below which count.
+Over the budget, the summary cuts the lines with the lowest `read` plus `write` first, and a report line counts as 1.
+The summary's first line says how many lines it cut and below which count.
 
 ## Explore commands
 
