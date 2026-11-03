@@ -5,6 +5,7 @@ The graph module holds the records, and this module turns them into text that `@
 
 import re
 from collections import defaultdict
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, overload
 
 from ichnos._graph import (
@@ -49,6 +50,7 @@ BUDGET = 8000
 """The default budget in characters: the only prompt size that Microsoft documents for Copilot Chat."""
 
 _TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+_DIRECT = frozenset({"IDENTITY", "TRANSFORMATION", "AGGREGATION"})
 # Only a quoted lowercase Oracle owner can take this name, and `dbml` raises on one.
 _REPORTS = "report"
 # The output lists at most this many observed values, and only their number above it (ADR 0003).
@@ -120,7 +122,7 @@ def dbml(
     if clash is not None:
         message = f'the owner "{_REPORTS}" of {clash.name} is the schema that DBML writes reports in'
         raise IchnosError(message)
-    blocks = [_project(graph), *(_table(t) for t in graph.tables)]
+    blocks = [_project(_note(graph)), *(_table(t) for t in graph.tables)]
     if graph.relationships:
         blocks.append("\n".join(_ref(r) for r in graph.relationships))
     blocks += [_report(r) for r in graph.reports]
@@ -211,12 +213,13 @@ def _endpoint_of(end: Table | Column | Report | OutputColumn) -> str:
             return f"{_REPORTS}.{_name(end.report.name)}.{_name(end.name)}"
 
 
-def _report(report: Report) -> str:
+def _report(report: Report, columns: Sequence[OutputColumn] | None = None) -> str:
     """Write a report as a table in the schema `report`, because a `Dep` endpoint must be a table (ADR 0009)."""
+    kept = report.output_columns if columns is None else columns
     lines = [
         f"  {_name(c.name)} {_name('|'.join(t for t in _TYPES if t in c.types) or 'unknown')}"
         f"{_settings([('ambiguity', '; '.join(_ambiguity(a) for a in c.ambiguities))])}"
-        for c in report.output_columns
+        for c in kept
     ] or ['  "*" unknown']
     ambiguity = "; ".join(_ambiguity(a) for a in report.ambiguities)
     head = f"Table {report_name(report)}{_settings([('kind', 'report'), ('ambiguity', ambiguity)])}"
@@ -247,8 +250,9 @@ def _endpoint(columns: tuple[Column, ...]) -> str:
     return f"{table}.{names[0]}" if len(names) == 1 else f"{table}.({', '.join(names)})"
 
 
-def _project(graph: Graph) -> str:
-    note = [
+def _note(graph: Graph) -> list[str]:
+    """Return the full file's note, which explains every mark it can hold (ADR 0011)."""
+    return [
         f"Inferred by ichnos from {len(graph.queries)} queries, with no database connection.",
         "Counts are distinct queries. A column with no type evidence has the type `unknown`.",
         "A column with evidence for two types writes both, such as `text|number`, an ambiguity.",
@@ -257,6 +261,9 @@ def _project(graph: Graph) -> str:
         "`?-?` joins two keys. Each key is a unique index, because ichnos never claims a primary key.",
         "The schema `report` holds the reports, which are queries, not tables.",
     ]
+
+
+def _project(note: list[str]) -> str:
     lines = "\n".join(f"  {line}" for line in note)
     return (
         f"Project ichnos {{\n  database_type: 'Oracle'\n  Note: '''\n{lines}\n  '''\n}}"
@@ -288,9 +295,11 @@ def _table(
     )
     kept = table.columns if columns is None else columns
     lines = [_column(c, detail) for c in kept] or ['  "*" unknown']
-    if table.keys:
+    # A slice writes only the keys whose columns it keeps, because DBML raises on a missing column.
+    keys = [k for k in table.keys if set(k.columns) <= set(kept)]
+    if keys:
         # ichnos never writes `pk`, because it never claims a primary key (ADR 0006).
-        indexes = (f"    {_key_label(k, quote=True)} [unique]" for k in table.keys)
+        indexes = (f"    {_key_label(k, quote=True)} [unique]" for k in keys)
         lines += ["", "  indexes {", *indexes, "  }"]
     return f"Table {table_name(table)}{settings} {{\n" + "\n".join(lines) + "\n}"
 
@@ -431,12 +440,17 @@ class _Slicer:
         self.slice = found
         self.budget = budget
         self.detail = detail
-        self.kept: dict[Table, tuple[Column, ...]] = {
-            t: tuple(c for c in cs if isinstance(c, Column))
-            for t, cs in found.columns.items()
-            if isinstance(t, Table)
-        }
-        self.examples = _examples(found.relationships) if examples else []
+        self.kept: dict[Table | Report, tuple[Column | OutputColumn, ...]] = dict(
+            found.columns
+        )
+        self.dependencies = list(found.dependencies)
+        self.lineage = found.kind in {"upstream", "downstream"}
+        if not examples:
+            self.examples: list[Query] = []
+        elif self.lineage:
+            self.examples = self._hop_queries()
+        else:
+            self.examples = _examples(found.relationships)
         self.cut: list[str] = []
 
     def write(self) -> str:
@@ -456,11 +470,13 @@ class _Slicer:
         return text
 
     def render(self, core: int | None = None) -> str:
-        tables = sorted(self.kept, key=lambda t: (self.slice.distances[t], _order(t)))
+        holders = sorted(self.kept, key=self._place)
         marks: set[str] = set()
-        blocks = [_table(t, self.kept[t], self.detail) for t in tables]
-        for table in tables:
-            marks |= _marks(table, self.kept[table])
+        blocks: list[str] = []
+        for table in (h for h in holders if isinstance(h, Table)):
+            columns = [c for c in self.kept[table] if isinstance(c, Column)]
+            blocks.append(_table(table, columns, self.detail))
+            marks |= _marks(table, columns)
         refs = [
             r
             for r in self.slice.relationships
@@ -469,26 +485,49 @@ class _Slicer:
         if refs:
             blocks.append("\n".join(_ref(r) for r in refs))
             marks |= {_operator(r) for r in refs}
+        for report in (h for h in holders if isinstance(h, Report)):
+            outputs = [c for c in self.kept[report] if isinstance(c, OutputColumn)]
+            blocks.append(_report(report, outputs))
+            marks.add("report")
+        # A lineage slice writes the self-dependency of each chain column (ADR 0012).
+        blocks += _self_dependencies(self.dependencies)
+        lines = [_rollup(r) for r in self.slice.rollups]
+        lines += [_dep(d) for d in self.dependencies if d.upstream != d.downstream]
+        if lines:
+            blocks.append("\n".join(lines))
         for query in self.examples:
-            lines = query.text.split("\n")
+            text = query.text.split("\n")
             blocks.append(
-                "\n".join([f"// {query.name}", *(f"// {line}" for line in lines)])
+                "\n".join([f"// {query.name}", *(f"// {line}" for line in text)])
             )
         return "\n\n".join([self._header(marks, core), *blocks]) + "\n"
 
+    def _place(self, holder: Table | Report) -> tuple[int, int, str, str]:
+        """Order tables and reports by distance from the start, then by name, tables first."""
+        distance = self.slice.distances[holder]
+        if isinstance(holder, Report):
+            return (distance, 1, "", holder.name)
+        return (distance, 0, *_order(holder))
+
     def _header(self, marks: set[str], core: int | None) -> str:
         found = self.slice
-        names = ", ".join(
-            _end_name(s) for s in found.starts if isinstance(s, Table | Report)
-        )
+        names = ", ".join(_end_name(s) for s in found.starts)
         total = len(found.graph.tables)
         tables = len([t for t in found.distances if isinstance(t, Table)])
-        if found.kind == "neighborhood":
-            asked = f"Neighborhood of {names} at depth {found.depth}: {tables} of {total} tables."
-        else:
-            asked = f"Join path between {names}: {tables} of {total} tables."
+        match found.kind:
+            case "neighborhood":
+                asked = f"Neighborhood of {names} at depth {found.depth}"
+            case "join path":
+                asked = f"Join path between {names}"
+            case _:
+                hops = (
+                    "with every indirect dependency"
+                    if found.indirect == "all"
+                    else "with indirect dependencies on the first hop"
+                )
+                asked = f"{found.kind.capitalize()} of {names}, {hops}"
         lines = [
-            asked,
+            f"{asked}: {tables} of {total} tables.",
             f"Inferred from {len(found.graph.queries)} queries, with no database connection.",
         ]
         lines += [line for mark, line in _LEGEND.items() if mark in marks]
@@ -510,20 +549,22 @@ class _Slicer:
             if (ends := found.outside.get(key))
         ]
         if found.unconnected:
-            outside.append(
-                f"No relationship connects {', '.join(_end_name(t) for t in found.unconnected)}."
-            )
-        note = "\n".join(f"  {line}" for line in [*lines, *outside])
-        return f"Project ichnos {{\n  database_type: 'Oracle'\n  Note: '''\n{note}\n  '''\n}}"
+            unconnected = ", ".join(_end_name(t) for t in found.unconnected)
+            outside.append(f"No relationship connects {unconnected}.")
+        return _project([*lines, *outside])
 
     def _cuts(self) -> list[Callable[[], None]]:
         """Return each cut in ADR 0012's order, which `write` applies one at a time."""
-        found = self.slice
         cuts: list[Callable[[], None]] = [
             self._drop_example(q) for q in reversed(self.examples)
         ]
+        if self.lineage:
+            if any(d.indirect for d in self._first_hop()):
+                cuts.append(self._drop_first_hop)
+            return cuts
+        found = self.slice
         movable = sorted(
-            (t for t in self.kept if t not in found.starts),
+            (t for t in self.kept if isinstance(t, Table) and t not in found.starts),
             key=lambda t: (
                 -found.distances[t],
                 count((*t.read, *t.write)),
@@ -542,6 +583,51 @@ class _Slicer:
         if found.kind == "neighborhood":
             cuts += [self._drop(t) for t in movable]
         return cuts
+
+    def _first_hop(self) -> list[Dependency]:
+        """Return the dependencies whose near end is the start, its columns, or its table or report."""
+        found = self.slice
+        start = found.starts[0]
+        starts: set[object] = {start, _holder(start)}
+        if isinstance(start, Table | Report):
+            starts |= set(found.columns.get(start, ()))
+        if found.kind == "upstream":
+            return [d for d in self.dependencies if d.downstream in starts]
+        return [d for d in self.dependencies if d.upstream in starts]
+
+    def _drop_first_hop(self) -> None:
+        """Drop the first hop's indirect dependencies, and every column that only they reached."""
+        first = set(self._first_hop())
+        kept: list[Dependency] = []
+        for dependency in self.dependencies:
+            if dependency not in first or not dependency.indirect:
+                kept.append(dependency)
+                continue
+            direct = {s: q for s, q in dependency.subtypes.items() if s in _DIRECT}
+            if direct:
+                kept.append(replace(dependency, subtypes=direct))
+        self.dependencies = kept
+        ends = {e for d in kept for e in (d.upstream, d.downstream)}
+        ends |= set(self.slice.starts)
+        self.kept = {
+            h: tuple(c for c in cs if c in ends or isinstance(h, Report))
+            for h, cs in self.kept.items()
+            if any(e is h or _holder(e) is h for e in ends)
+        }
+        self.cut.append("the first hop's indirect dependencies")
+
+    def _hop_queries(self) -> list[Query]:
+        """Return the queries that write each hop, nearest hop first (ADR 0012)."""
+        upstream = self.slice.kind == "upstream"
+
+        def hop(dependency: Dependency) -> int:
+            near = dependency.downstream if upstream else dependency.upstream
+            return self.slice.distances.get(_holder(near), 0)
+
+        ordered = sorted(self.dependencies, key=hop)
+        return list(
+            dict.fromkeys(q for d in ordered for qs in d.subtypes.values() for q in qs)
+        )
 
     def _drop_example(self, query: Query) -> Callable[[], None]:
         def cut() -> None:
@@ -563,6 +649,22 @@ class _Slicer:
             self.cut.append(f"dropped {table_name(table)}")
 
         return cut
+
+
+def _rollup(rollup: Rollup) -> str:
+    counts = [("queries", count(rollup.queries))]
+    upstream, downstream = (
+        _endpoint_of(rollup.upstream),
+        _endpoint_of(rollup.downstream),
+    )
+    return f"Dep: {upstream} -> {downstream}{_settings(counts)}"
+
+
+def _dep(dependency: Dependency) -> str:
+    counts = [(s.lower(), count(q)) for s, q in dependency.subtypes.items()]
+    upstream = _endpoint_of(dependency.upstream)
+    downstream = _endpoint_of(dependency.downstream)
+    return f"Dep: {upstream} -> {downstream}{_settings(counts)}"
 
 
 def _examples(relationships: Sequence[Relationship]) -> list[Query]:
@@ -606,9 +708,9 @@ def _operator(relationship: Relationship) -> str:
     return "?-?" if _keyed(first) and _keyed(second) else "?<>?"
 
 
-def _end_name(end: Table | Report) -> str:
+def _end_name(end: Table | Column | Report | OutputColumn) -> str:
     """Write a slice's start or outside end as the DBML text names it."""
-    return report_name(end) if isinstance(end, Report) else table_name(end)
+    return _endpoint_of(end)
 
 
 def _order(table: Table) -> tuple[str, str]:

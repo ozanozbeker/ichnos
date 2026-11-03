@@ -846,8 +846,79 @@ class Graph:
             self,
         )
 
+    def upstream(
+        self,
+        start: Table | Column | Report | OutputColumn,
+        indirect: Indirect = "first_hop",
+    ) -> Slice:
+        """Return where a start's values come from: the chain of dependencies to its upstream ends (ADR 0012).
+
+        A report starts at all its output columns, and a table at all its columns.
+        The walk continues only from a column it reaches through a direct dependency,
+        and it visits each end once, so a cycle ends it.
+
+        Parameters
+        ----------
+        start
+            A table, a column, a report or an output column.
+        indirect
+            `"first_hop"`, the default, keeps the indirect dependencies of the queries that write the start only.
+            `"all"` keeps every indirect dependency, and the walk also continues from a column it reaches through one.
+
+        Returns
+        -------
+        :
+            The slice, which `dbml` writes.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer(
+            {"r": "SELECT o.status AS state FROM sales.orders o WHERE o.total > 1"}
+        )
+        graph.upstream(graph.report("r")).dependencies
+        ```
+        """
+        return _Walk(self, "upstream", start, indirect).slice()
+
+    def downstream(
+        self, start: Table | Column, indirect: Indirect = "first_hop"
+    ) -> Slice:
+        """Return what a start feeds, the other direction of `upstream` (ADR 0012).
+
+        A downstream slice of a table writes only the rollups, over all hops, to every downstream table and report.
+
+        Parameters
+        ----------
+        start
+            A table or a column. A report is never an upstream end.
+        indirect
+            `"first_hop"`, the default, keeps the indirect dependencies of the queries that read the start only.
+            `"all"` keeps every indirect dependency.
+
+        Returns
+        -------
+        :
+            The slice, which `dbml` writes.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer(
+            {"c": "CREATE TABLE m.t AS SELECT o.status FROM sales.orders o"}
+        )
+        graph.downstream(graph.table("sales.orders")).rollups
+        ```
+        """
+        return _Walk(self, "downstream", start, indirect).slice()
+
 
 type SliceKind = Literal["neighborhood", "join path", "upstream", "downstream"]
+type Start = Table | Column | Report | OutputColumn
 type Indirect = Literal["first_hop", "all"]
 
 
@@ -987,6 +1058,184 @@ _SUBTYPES: tuple[Subtype, ...] = (
     "WINDOW",
     "CONDITIONAL",
 )
+
+
+class _Walk:
+    """Follow the dependencies of a lineage slice, one hop at a time (ADR 0012)."""
+
+    def __init__(
+        self,
+        graph: Graph,
+        kind: Literal["upstream", "downstream"],
+        start: Start,
+        indirect: Indirect,
+    ) -> None:
+        self.graph = graph
+        self.kind = kind
+        self.start = start
+        self.indirect = indirect
+        self.ends: defaultdict[End, list[Dependency]] = defaultdict(list)
+        for dependency in graph.dependencies:
+            near = dependency.downstream if kind == "upstream" else dependency.upstream
+            self.ends[near].append(dependency)
+
+    def slice(self) -> Slice:
+        if self.kind == "downstream" and isinstance(self.start, Table):
+            return self._rollups(self.start)
+        starts = _starts(self.start)
+        self.distances: dict[Table | Report, int] = dict.fromkeys(
+            map(_holder, starts), 0
+        )
+        self.kept: defaultdict[Table | Report, dict[Column | OutputColumn, None]] = (
+            defaultdict(dict)
+        )
+        self.found: dict[Dependency, Dependency] = {}
+        for end in starts:
+            if isinstance(end, Column | OutputColumn):
+                self.kept[_holder(end)][end] = None
+        if self.kind == "upstream" and isinstance(self.start, Column | OutputColumn):
+            self._first_rows(self.start)
+        self._follow(starts)
+        columns = {
+            h: h.output_columns
+            if isinstance(h, Report)
+            else tuple(c for c in h.columns if c in self.kept[h])
+            for h in self.distances
+        }
+        return Slice(
+            self.kind,
+            (self.start,),
+            None,
+            self.indirect,
+            self.distances,
+            columns,
+            (),
+            tuple(sorted(self.found.values(), key=_dependency_order)),
+            (),
+            {},
+            (),
+            self.graph,
+        )
+
+    def _follow(self, starts: list[End]) -> None:
+        """Visit each end once, hop by hop, keeping the dependencies the slice writes."""
+        visited = set(starts)
+        frontier = starts
+        hop = 0
+        while frontier:
+            following: list[End] = []
+            for dependency in (d for end in frontier for d in self.ends[end]):
+                kept = self._keep(dependency, first=hop == 0)
+                if kept is None:
+                    continue
+                far = self._reach(dependency, kept, hop + 1)
+                # The walk continues only from a column it reaches through a direct dependency.
+                through = kept.direct or self.indirect == "all"
+                if (
+                    isinstance(far, Column | OutputColumn)
+                    and through
+                    and far not in visited
+                ):
+                    visited.add(far)
+                    following.append(far)
+                    # Every indirect dependency includes the rows that each query selects for that column's table.
+                    holder = _holder(far)
+                    if self.indirect == "all" and holder not in visited:
+                        visited.add(holder)
+                        following.append(holder)
+            frontier = following
+            hop += 1
+
+    def _reach(self, dependency: Dependency, kept: Dependency, hop: int) -> End:
+        """Record a dependency the slice writes, and return its far end."""
+        self.found[dependency] = kept
+        far = dependency.upstream if self.kind == "upstream" else dependency.downstream
+        self.distances.setdefault(_holder(far), hop)
+        if isinstance(far, Column | OutputColumn):
+            self.kept[_holder(far)][far] = None
+        return far
+
+    def _first_rows(self, start: Column | OutputColumn) -> None:
+        """Add the row filters of the queries that write a column, which state which rows it holds (ADR 0012)."""
+        writing = {
+            q for d in self.ends[start] for qs in d.subtypes.values() for q in qs
+        }
+        for dependency in self.ends[_holder(start)]:
+            subtypes = {
+                s: rows
+                for s, q in dependency.subtypes.items()
+                if (rows := tuple(x for x in q if x in writing))
+            }
+            if subtypes:
+                self._reach(dependency, replace(dependency, subtypes=subtypes), 1)
+
+    def _keep(self, dependency: Dependency, *, first: bool) -> Dependency | None:
+        """Keep a dependency's subtypes: every one on the first hop, and past it only the direct ones."""
+        if first or self.indirect == "all":
+            return dependency
+        subtypes = {s: q for s, q in dependency.subtypes.items() if s in _DIRECT}
+        return replace(dependency, subtypes=subtypes) if subtypes else None
+
+    def _rollups(self, start: Table) -> Slice:
+        """Follow the rollups from a table to every downstream table and report, over all hops."""
+        distances: dict[Table | Report, int] = {start: 0}
+        found: list[Rollup] = []
+        frontier: list[Table | Report] = [start]
+        while frontier:
+            following: list[Table | Report] = []
+            for holder in frontier:
+                for rollup in self.graph.rollups:
+                    if rollup.upstream is holder and rollup not in found:
+                        found.append(rollup)
+                        if rollup.downstream not in distances:
+                            distances[rollup.downstream] = distances[holder] + 1
+                            following.append(rollup.downstream)
+            frontier = following
+        # Each block lists the columns and output columns that depend on the start table.
+        depending: dict[Table | Report, dict[Column | OutputColumn, None]] = (
+            defaultdict(dict)
+        )
+        pending: list[End] = [start, *start.columns]
+        seen = set(pending)
+        while pending:
+            for dependency in self.ends[pending.pop()]:
+                far = dependency.downstream
+                if isinstance(far, Column | OutputColumn):
+                    depending[_holder(far)][far] = None
+                if far not in seen:
+                    seen.add(far)
+                    pending.append(far)
+        columns = {h: tuple(depending[h]) for h in distances}
+        return Slice(
+            "downstream",
+            (start,),
+            None,
+            self.indirect,
+            distances,
+            columns,
+            (),
+            (),
+            tuple(
+                sorted(
+                    found,
+                    key=lambda r: (_end_order(r.downstream), _end_order(r.upstream)),
+                )
+            ),
+            {},
+            (),
+            self.graph,
+        )
+
+
+def _starts(start: Start) -> list[End]:
+    """Return the ends a lineage walk starts at: a report's output columns and a table's columns, with the report or table."""
+    match start:
+        case Table():
+            return [start, *start.columns]
+        case Report():
+            return [start, *start.output_columns]
+        case _:
+            return [start]
 
 
 def _parts(name: str) -> list[str]:
