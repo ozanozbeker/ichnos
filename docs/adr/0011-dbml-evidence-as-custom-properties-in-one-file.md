@@ -97,8 +97,8 @@ Each dependency is one short-form `Dep` with `->` ([issue 36](https://github.com
 A block shares one set of keys across its edges, and an inline `dep:` takes no keys.
 Each transformation subtype is a key with its count, such as `[identity: 2, filter: 1]` ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 
-For each pair of a table and a table or report that a dependency joins, the output writes the table-level dependency as its own `Dep`, with `queries` set to its count.
-A dependency that ichnos stores at table level, from an unexpanded `*`, shares that edge, so its subtype counts go beside `queries`.
+For each pair of a table and a table or report that a dependency joins, the output writes the rollup as its own `Dep`, with `queries` set to its count.
+A dependency that ichnos stores at table level, from an unexpanded `*` or a `COUNT(*)` in a clause ([ADR 0010](0010-lineage-from-clause-positions-with-openlineage-subtypes.md)), shares that edge, so its subtype counts go beside `queries`.
 `Dep` lines group by their downstream end, tables before reports, with the table-level line first.
 
 DBML raises on `t.a -> t.a`.

@@ -42,7 +42,10 @@ _Avoid_: invalid query, failed query
 ## Schemas
 
 **Inferred schema**: The tables, columns and relationships ichnos derives from a corpus.
-_Avoid_: schema graph, model
+_Avoid_: model
+
+**Graph**: The inferred schema, the reports, the lineage and the unparsed queries of one corpus.
+_Avoid_: schema graph, result
 
 **True schema**: The database's actual schema. ichnos never sees it.
 _Avoid_: hidden schema, real schema, ground truth
@@ -151,6 +154,10 @@ _Avoid_: value dependency
 
 **Indirect dependency**: A dependency whose upstream column selects which rows or values the downstream end holds, as a column in `WHERE`, `JOIN`, `GROUP BY` or a `CASE` condition does.
 _Avoid_: control dependency, filter dependency
+
+**Rollup**: A dependency between two tables, or between a table and a report, that holds wherever another dependency joins them.
+Its evidence count is the number of distinct queries that hold one.
+_Avoid_: table-level dependency, table lineage
 
 **Transformation subtype**: OpenLineage's name for how a dependency's downstream end uses its upstream end, such as `IDENTITY`, `AGGREGATION` or `FILTER`.
 Each subtype is an evidence kind of the dependency.

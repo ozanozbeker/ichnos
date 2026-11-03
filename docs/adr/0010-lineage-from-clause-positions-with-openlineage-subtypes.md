@@ -22,6 +22,8 @@ Every `MINUS` branch after the first is `FILTER`, because it removes rows and co
 
 `COUNT(*)`, `COUNT(1)` and `COUNT` of a literal read whole rows.
 Each gives a table-to-column `AGGREGATION` dependency from every table in its `FROM`, traced through local relations, so 039's `ORDER_COUNT` depends on `SALES.ORDERS`.
+In a clause, it gives a table-to-table or table-to-report dependency with the clause's subtype instead.
+So 040's and 041's `HAVING COUNT(*) > 1` give table-to-report `FILTER` dependencies.
 An aggregate over a column, `COUNT(DISTINCT col)` included, gives a column-to-column `AGGREGATION` dependency.
 `COUNT(*) OVER (...)` is `AGGREGATION` from whole rows, and its window columns give `WINDOW` dependencies.
 
@@ -68,9 +70,9 @@ Each transformation subtype is an evidence kind, counted in distinct queries ([A
 An ambiguous upstream column gives a dependency ambiguity, which lists each candidate column with its count from other queries and adds evidence to none.
 
 ichnos stores each dependency at the finest level its query shows.
-A table-to-table dependency holds wherever a column-level or mixed dependency joins the two tables, and its count is the number of distinct queries that hold one.
-The API and the output compute it.
-An unexpanded `*` gives the only table-to-table or table-to-report dependency that ichnos stores.
+A rollup joins two tables, or a table and a report, wherever another dependency joins them, and its count is the number of distinct queries that hold one.
+The API and the output compute it ([ADR 0013](0013-public-api-is-a-graph-walks-that-return-slices-and-writer-functions.md)).
+ichnos stores a dependency between two tables, or a table and a report, only for an unexpanded `*` and for a `COUNT(*)` in a clause.
 
 A dependency is evidence for no relationship and no type.
 [ADR 0002](0002-relationships-from-bare-equality-direction-from-key.md) counts only bare `=` for a relationship.
