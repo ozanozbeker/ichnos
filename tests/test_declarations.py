@@ -76,7 +76,7 @@ def test_an_ambiguity_whose_every_candidate_lacks_the_column_contradicts_them():
     assert [(c.query.name, c.reason, c.column) for c in t.contradictions] == [
         ("q", "undeclared column", "Z")
     ]
-    assert [a.kind for a in graph.ambiguities] == ["column"]
+    assert [a.kind for a in graph.ambiguities] == ["column", "dependency"]
     assert not t.complete
     assert not v.complete
 
@@ -94,7 +94,10 @@ def test_an_undeclared_column_contradicts_the_declaration_and_stays():
     [z] = [c for c in table.columns if c.undeclared]
     assert z.name == "Z"
     # A contradicted declaration settles nothing more.
-    assert [a.subject for a in graph.ambiguities] == ["C"]
+    assert [(a.kind, a.subject) for a in graph.ambiguities] == [
+        ("column", "C"),
+        ("dependency", "C"),
+    ]
     text = ichnos.dbml(graph)
     assert (
         "Table M.T [kind: 'base table', declared: 1, read: 2, contradicted: 'q: undeclared column Z'"

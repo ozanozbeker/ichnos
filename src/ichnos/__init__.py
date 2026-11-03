@@ -8,6 +8,7 @@ from ichnos._graph import (
     Column,
     Contradiction,
     Declaration,
+    Dependency,
     Graph,
     IchnosError,
     Key,
@@ -16,12 +17,13 @@ from ichnos._graph import (
     Query,
     Relationship,
     Report,
+    Rollup,
     Table,
     UnparsedQuery,
     infer,
 )
 from ichnos._infer import ContradictionReason
-from ichnos._read import KeyShape, Position, TableKind, Type
+from ichnos._read import KeyShape, Position, Subtype, TableKind, Type
 
 __all__ = [
     "Ambiguity",
@@ -30,6 +32,7 @@ __all__ = [
     "Contradiction",
     "ContradictionReason",
     "Declaration",
+    "Dependency",
     "Graph",
     "IchnosError",
     "Key",
@@ -40,6 +43,8 @@ __all__ = [
     "Query",
     "Relationship",
     "Report",
+    "Rollup",
+    "Subtype",
     "Table",
     "TableKind",
     "Type",

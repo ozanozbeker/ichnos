@@ -7,12 +7,15 @@ sqlglot's `optimizer.scope` covers no statement level of an `UPDATE` or `MERGE` 
 import logging
 import re
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.tokens import Token, TokenType
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # sqlglot logs a warning for each `Command` it falls back to, which `trace` lists as unparsed instead.
 # A handler on its logger stops Python's last-resort handler printing the warning to stderr.
@@ -26,6 +29,30 @@ type Statement = Literal["select", "insert", "update", "merge", "delete", "creat
 type TableKind = Literal["base table", "view", "materialized view"]
 type Type = Literal["text", "number", "datetime", "interval"]
 type KeyShape = Literal["generated", "merge", "single_row", "grouped"]
+type Subtype = Literal[
+    "IDENTITY",
+    "TRANSFORMATION",
+    "AGGREGATION",
+    "JOIN",
+    "FILTER",
+    "GROUP_BY",
+    "SORT",
+    "WINDOW",
+    "CONDITIONAL",
+]
+# The direct subtypes, from the one a path takes last to the one it takes first (ADR 0010).
+_DIRECT: dict[Subtype, int] = {"IDENTITY": 0, "TRANSFORMATION": 1, "AGGREGATION": 2}
+
+
+def combine(outer: Subtype, inner: Subtype) -> Subtype:
+    """Return the subtype of a path: its outermost indirect step, or else the first of AGGREGATION, TRANSFORMATION and IDENTITY on it."""
+    if outer not in _DIRECT:
+        return outer
+    if inner not in _DIRECT:
+        return inner
+    return max(outer, inner, key=_DIRECT.__getitem__)
+
+
 type Item = str | TableKey
 """One position of a select list: its name, or a table whose `*` the query alone cannot expand."""
 
@@ -103,6 +130,33 @@ _NOTHING = Fact()
 
 
 @dataclass(frozen=True, slots=True)
+class Whole:
+    """The whole rows of a table, which `COUNT(*)` reads and a `*` that the query cannot expand copies."""
+
+    table: TableKey
+    star: bool
+
+
+type Upstream = ColumnRef | Whole
+type Dep = tuple[Upstream, Subtype]
+
+
+@dataclass(frozen=True, slots=True)
+class Flow:
+    """One dependency that one query shows, before the declarations map its ends (ADR 0010).
+
+    `table` is the written table, or None for a report. `column` names a written column,
+    `position` names an output column or an unnamed value by its select-list item, and with neither the rows depend.
+    """
+
+    upstream: Upstream
+    subtype: Subtype
+    table: TableKey | None
+    column: str | None = None
+    position: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Write:
     """A table that a DML statement writes.
 
@@ -150,6 +204,7 @@ class Trace:
     joins: tuple[Join, ...]
     # A `SELECT` statement's output: each position's name, or a table whose `*` it cannot expand, and its value.
     outputs: tuple[tuple[Item, Value], ...] = ()
+    flows: tuple[Flow, ...] = ()
 
 
 def split(text: str) -> list[str]:
@@ -214,6 +269,7 @@ def _trace(tree: exp.Expr, text: str) -> Trace:
             walker.texts = _select_texts(tree, text)
             output = walker.query(tree, None, {})
             walker.outputs = tuple(zip(output.columns, output.values, strict=True))
+            walker.report(output)
             statement = "select"
         case exp.Insert():
             statement = walker.insert(tree)
@@ -256,6 +312,18 @@ class _TableSource:
 class _LocalSource:
     columns: tuple[Item, ...]
     values: tuple[Value, ...] = ()
+    # What each position is computed from, and what selects the rows (ADR 0010).
+    flows: tuple[tuple[Dep, ...], ...] = ()
+    rows: tuple[Dep, ...] = ()
+    # The tables the relation reads, whose whole rows a `COUNT(*)` over it reads.
+    tables: frozenset[TableKey] = frozenset()
+
+    def deps(self, name: str) -> tuple[Dep, ...]:
+        """Return what the position with a name is computed from."""
+        flows = self.flows or ((),) * len(self.columns)
+        return next(
+            (f for item, f in zip(self.columns, flows, strict=True) if item == name), ()
+        )
 
 
 type _Source = _TableSource | _LocalSource
@@ -268,13 +336,16 @@ class _Scope:
     # An unaliased table is also reachable by its qualified name, as in `sales.orders.order_id`.
     unaliased: dict[TableKey, _TableSource] = field(default_factory=dict)
     using: dict[str, list[_Source]] = field(default_factory=dict)
-    aliases: set[str] = field(default_factory=set)
+    # What each select-list alias is computed from, which an `ORDER BY` can name.
+    aliases: dict[str, list[Dep]] = field(default_factory=dict)
     # The CTEs that a subquery anywhere in the scope can read.
     ctes: dict[str, _LocalSource] = field(default_factory=dict)
+    # What selects the rows: the scope's clauses and the rows of each local relation it reads.
+    rows: list[Dep] = field(default_factory=list)
 
 
 class _Walker:
-    """Walk one statement's scopes and collect its table and column references."""
+    """Walk one statement's scopes and collect its table and column references and its lineage."""
 
     def __init__(self) -> None:
         self.reads: set[TableKey] = set()
@@ -290,6 +361,7 @@ class _Walker:
         ] = {}
         self.naturals: list[Join] = []
         self.outputs: tuple[tuple[Item, Value], ...] = ()
+        self.flows: list[Flow] = []
         # The source text of each unaliased expression in a report's select list, keyed by the node's id.
         self.texts: dict[int, str] = {}
 
@@ -310,7 +382,28 @@ class _Walker:
                 *self.naturals,
             ),
             self.outputs,
+            tuple(dict.fromkeys(self.flows)),
         )
+
+    def flow(
+        self,
+        deps: Iterable[Dep],
+        table: TableKey | None,
+        column: str | None = None,
+        position: int | None = None,
+    ) -> None:
+        """Record that each direct dependency feeds one downstream end."""
+        self.flows.extend(
+            Flow(up, sub, table, column, position)
+            for up, sub in deps
+            if sub in _DIRECT and not (isinstance(up, Whole) and not up.star)
+        )
+
+    def report(self, local: _LocalSource) -> None:
+        """Record the lineage of a report: each output position, and what selects its rows."""
+        for position, deps in enumerate(local.flows):
+            self.flow(deps, None, position=position)
+        self.flow(local.rows, None)
 
     # --- statements ---------------------------------------------------------------------------
 
@@ -320,44 +413,62 @@ class _Walker:
             if isinstance(tree.expression, exp.Query)
             else None
         )
-        self._insert(tree, _Scope(None), source)
+        self._insert(tree, _Scope(None), source, [])
         return "insert"
 
     def insert_all(self, tree: exp.MultitableInserts) -> Statement:
         source = self.query(tree.args["source"], None, {})
         scope = _Scope(None, {"": source})
         for conditional in tree.expressions:
-            self.expression(conditional.args.get("expression"), scope, "where")
-            self._insert(conditional.this, scope, source)
+            # A `WHEN` condition selects the rows of its own `INTO` target (ADR 0010).
+            condition = conditional.args.get("expression")
+            rows = self.expression(condition, scope, "where", "FILTER")
+            self._insert(conditional.this, scope, source, rows)
         return "insert"
 
     def _insert(
-        self, insert: exp.Insert, scope: _Scope, source: _LocalSource | None
+        self,
+        insert: exp.Insert,
+        scope: _Scope,
+        source: _LocalSource | None,
+        rows: list[Dep],
     ) -> None:
         """Record one `INSERT` or one `INTO` of an `INSERT ALL`, whose values come from `source` or a `VALUES` list."""
         listed = isinstance(insert.this, exp.Schema)
         target = _table_key(insert.this.this if listed else insert.this)
         values: tuple[Value, ...] = source.values if source is not None else ()
+        flows: tuple[tuple[Dep, ...], ...] = source.flows if source is not None else ()
         if isinstance(insert.expression, exp.Values):
             [row] = insert.expression.expressions
-            self.expression(row, scope, "select")
             values = tuple(assigned(v) for v in row.expressions)
-        self._targets(insert.this, target, values)
+            flows = tuple(
+                tuple(self.expression(v, scope, "select", "IDENTITY"))
+                for v in row.expressions
+            )
+        names = self._targets(insert.this, target, values)
         self.writes.append(Write(target, None if listed else values))
+        self.flow([*(source.rows if source is not None else ()), *rows], target)
+        for position, deps in enumerate(flows):
+            if listed and len(names) == len(flows):
+                self.flow(deps, target, names[position])
+            else:
+                self.flow(deps, target, position=position)
 
     def update(self, tree: exp.Update) -> Statement:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
         self.writes.append(Write(target, None))
         self._assignments(tree.expressions, scope, target)
-        self.expression(tree.args.get("where"), scope, "where")
+        where = self.expression(tree.args.get("where"), scope, "where", "FILTER")
+        self.flow(where, target)
         return "update"
 
     def merge(self, tree: exp.Merge) -> Statement:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
         source = self._add_source(scope, tree.args["using"], {})
-        self.expression(tree.args["on"], scope, "join")
+        self.flow(self.expression(tree.args["on"], scope, "join", "JOIN"), target)
+        self.flow(scope.rows, target)
         self._equalities(tree.args["on"], scope)
         target_source = (
             _lookup(scope, target[0], target[1])
@@ -369,17 +480,24 @@ class _Walker:
             self.keys.append(KeyEvidence(target, compared, "merge"))
         values: tuple[Value, ...] | None = None
         for when in tree.args["whens"].expressions:
-            self.expression(when.args.get("condition"), scope, "where")
+            condition = when.args.get("condition")
+            self.flow(self.expression(condition, scope, "where", "FILTER"), target)
             action = when.args["then"]
             if isinstance(action, exp.Update):
                 self._assignments(action.expressions, scope, target)
             elif isinstance(action, exp.Insert):
                 row = tuple(assigned(v) for v in action.expression.expressions)
-                self._targets(action.this, target, row)
-                self.expression(action.expression, scope, "select")
-                if not isinstance(action.this, exp.Tuple):
+                names = self._targets(action.this, target, row)
+                for position, value in enumerate(action.expression.expressions):
+                    deps = self.expression(value, scope, "select", "IDENTITY")
+                    if names:
+                        self.flow(deps, target, names[position])
+                    else:
+                        self.flow(deps, target, position=position)
+                if not names:
                     values = row
-            self.expression(action.args.get("where"), scope, "where")
+            where = self.expression(action.args.get("where"), scope, "where", "FILTER")
+            self.flow(where, target)
         self.writes.append(Write(target, values))
         return "merge"
 
@@ -387,7 +505,8 @@ class _Walker:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
         self.writes.append(Write(target, None))
-        self.expression(tree.args.get("where"), scope, "where")
+        # A `DELETE` computes no value, so it gives no dependency (ADR 0010).
+        self.expression(tree.args.get("where"), scope, "where", "FILTER")
         return "delete"
 
     def create(self, tree: exp.Create) -> Statement:
@@ -416,6 +535,9 @@ class _Walker:
         grouped = _grouped(tree.expression, columns)
         if grouped:
             self.keys.append(KeyEvidence(target, grouped, "grouped"))
+        for position, deps in enumerate(source.flows):
+            self.flow(deps, target, position=position)
+        self.flow(source.rows, target)
         return "create"
 
     def _target(self, scope: _Scope, node: exp.Table) -> TableKey:
@@ -427,14 +549,17 @@ class _Walker:
 
     def _targets(
         self, node: exp.Expression, target: TableKey, values: tuple[Value, ...]
-    ) -> None:
+    ) -> list[str]:
         """Record each column that a column list names, with what the value at its position shows."""
+        names: list[str] = []
         if isinstance(node, exp.Schema | exp.Tuple):
             for index, column in enumerate(node.expressions):
                 name = _name(column.this if isinstance(column, exp.Column) else column)
                 value = values[index] if index < len(values) else Fact()
                 fact = value if isinstance(value, Fact) else Fact()
                 self.refs.append(ColumnRef(name, ((target,),), "insert", fact))
+                names.append(name)
+        return names
 
     def _assignments(
         self, assignments: list[exp.Expression], scope: _Scope, target: TableKey
@@ -446,47 +571,68 @@ class _Walker:
                 else [assignment.this]
             )
             fact = assigned(assignment.expression) if len(columns) == 1 else Fact()
+            deps = self.expression(assignment.expression, scope, "select", "IDENTITY")
             for column in columns:
-                ref = ColumnRef(_name(column.this), ((target,),), "set", fact)
-                self.refs.append(ref)
-            self.expression(assignment.expression, scope, "select")
+                name = _name(column.this)
+                self.refs.append(ColumnRef(name, ((target,),), "set", fact))
+                self.flow(deps, target, name)
 
     # --- queries ------------------------------------------------------------------------------
 
     def query(
         self, node: exp.Expr, parent: _Scope | None, ctes: dict[str, _LocalSource]
     ) -> _LocalSource:
-        """Walk a query and return its output column names as a local relation."""
+        """Walk a query and return it as a local relation, with its names and its lineage."""
         ctes = dict(ctes)
         with_ = node.args.get("with_")
         for cte in with_.expressions if with_ else ():
             name = _name(cte.args["alias"].this)
-            declared = [_name(c) for c in cte.args["alias"].columns]
+            declared = tuple(_name(c) for c in cte.args["alias"].columns)
             # A recursive CTE reads itself, so its name is visible inside its own body.
-            ctes[name] = _LocalSource(tuple(declared) or _output_names(cte.this))
+            ctes[name] = _LocalSource(declared or _output_names(cte.this))
             body = self.query(cte.this, parent, ctes)
-            ctes[name] = _LocalSource(tuple(declared) or body.columns, body.values)
+            ctes[name] = replace(body, columns=declared or body.columns)
         match node:
             case exp.Subquery():
                 return self.query(node.this, parent, ctes)
             case exp.SetOperation():
-                self._same_type_positions(node)
-                first = self.query(node.left, parent, ctes)
-                self.query(node.right, parent, ctes)
-                # A set operation's `ORDER BY` names its output columns only.
-                self.expression(
-                    node.args.get("order"),
-                    _Scope(
-                        parent, aliases={c for c in first.columns if isinstance(c, str)}
-                    ),
-                    "order_by",
-                )
-                return first
+                return self._set_operation(node, parent, ctes)
             case exp.Select():
                 return self._select(node, parent, ctes)
             case _:
                 message = f"unsupported query: {node.key.upper()}"
                 raise ReadError(message)
+
+    def _set_operation(
+        self,
+        node: exp.SetOperation,
+        parent: _Scope | None,
+        ctes: dict[str, _LocalSource],
+    ) -> _LocalSource:
+        self._same_type_positions(node)
+        first = self.query(node.left, parent, ctes)
+        second = self.query(node.right, parent, ctes)
+        rows: list[Dep] = [*first.rows]
+        flows = first.flows
+        if isinstance(node, exp.Except):
+            # A MINUS branch after the first removes rows and computes no value (ADR 0010).
+            removed = [*(d for f in second.flows for d in f), *second.rows]
+            rows += [(up, combine("FILTER", sub)) for up, sub in removed]
+        else:
+            # A set operation maps its branches by position.
+            flows = (
+                tuple((*a, *b) for a, b in zip(first.flows, second.flows, strict=False))
+                + first.flows[len(second.flows) :]
+            )
+            rows += second.rows
+        # A set operation's `ORDER BY` names its output columns only.
+        names = (c for c in first.columns if isinstance(c, str))
+        scope = _Scope(
+            parent, aliases={n: list(f) for n, f in zip(names, flows, strict=False)}
+        )
+        rows += self.expression(node.args.get("order"), scope, "order_by", "SORT")
+        tables = first.tables | second.tables
+        return _LocalSource(first.columns, first.values, flows, tuple(rows), tables)
 
     def _same_type_positions(self, node: exp.SetOperation) -> None:
         """Give a bare column the fixed type that another branch has at its position (ADR 0007)."""
@@ -524,23 +670,32 @@ class _Walker:
             )
             if isinstance(source, _TableSource):
                 source.optional = True
+        projected: dict[int, list[Dep]] = {}
         for projection in node.expressions:
-            self.expression(projection, scope, "select")
+            deps = self.expression(projection, scope, "select", "IDENTITY")
+            projected[id(projection)] = deps
             if isinstance(projection, exp.Alias):
-                scope.aliases.add(_name(projection.args["alias"]))
-        self.expression(node.args.get("where"), scope, "where")
-        self.expression(node.args.get("group"), scope, "group_by")
-        self.expression(node.args.get("having"), scope, "where")
+                scope.aliases[_name(projection.args["alias"])] = deps
+        scope.rows += self.expression(where, scope, "where", "FILTER")
+        scope.rows += self.expression(
+            node.args.get("group"), scope, "group_by", "GROUP_BY"
+        )
+        scope.rows += self.expression(node.args.get("having"), scope, "where", "FILTER")
         connect = node.args.get("connect")
         if connect:
-            self.expression(connect.args.get("start"), scope, "where")
-            self.expression(connect.args["connect"], scope, "join")
+            scope.rows += self.expression(
+                connect.args.get("start"), scope, "where", "FILTER"
+            )
+            scope.rows += self.expression(
+                connect.args["connect"], scope, "join", "JOIN"
+            )
             self._equalities(connect.args["connect"], scope)
         for join in node.args.get("joins") or ():
             self._equalities(join.args.get("on"), scope)
         self._equalities(where and where.this, scope)
-        self.expression(node.args.get("order"), scope, "order_by")
-        return _LocalSource(*_expand(node, scope, self.texts))
+        scope.rows += self.expression(node.args.get("order"), scope, "order_by", "SORT")
+        items, values, flows = _expand(node, scope, self.texts, projected)
+        return _LocalSource(items, values, flows, tuple(scope.rows), _tables(scope))
 
     def _join(
         self, scope: _Scope, join: exp.Join, ctes: dict[str, _LocalSource]
@@ -561,20 +716,22 @@ class _Walker:
         ]:
             if isinstance(optional, _TableSource):
                 optional.optional = True
-        self.expression(join.args.get("on"), scope, "join")
+        scope.rows += self.expression(join.args.get("on"), scope, "join", "JOIN")
         for identifier in join.args.get("using") or ():
             name = _name(identifier)
             left = [s for s in before if _holds(s, name)]
-            self._emit(name, source, "join")
+            scope.rows += self._emit(name, source, "join", "JOIN")
             if len(left) == 1:
-                self._emit(name, left[0], "join")
+                scope.rows += self._emit(name, left[0], "join", "JOIN")
                 if isinstance(left[0], _TableSource) and isinstance(
                     source, _TableSource
                 ):
                     self._pair(left[0], source, name, name)
             else:
                 tables = tuple(s.key for s in left if isinstance(s, _TableSource))
-                self.refs.append(ColumnRef(name, (tables,), "join"))
+                ref = ColumnRef(name, (tables,), "join")
+                self.refs.append(ref)
+                scope.rows.append((ref, "JOIN"))
             scope.using[name] = [*left, source]
 
     def _add_source(
@@ -586,6 +743,7 @@ class _Walker:
             if key[0] is None and key[1] in ctes:
                 local = ctes[key[1]]
                 scope.sources[_name(alias.this) if alias else key[1]] = local
+                scope.rows += local.rows
                 return local
             if key == (None, "DUAL"):
                 # DUAL is not a table, and its one column is never a column reference.
@@ -600,38 +758,99 @@ class _Walker:
             return table
         local = self.query(node, scope.parent, ctes)
         scope.sources[_name(alias.this) if alias else f"#{len(scope.sources)}"] = local
+        scope.rows += local.rows
         return local
 
     # --- expressions --------------------------------------------------------------------------
 
-    def expression(
-        self, node: exp.Expr | None, scope: _Scope, position: Position
-    ) -> None:
-        """Collect the column references of one expression, and walk each subquery inside it."""
+    def expression(  # noqa: PLR0911 # one case per kind of node
+        self,
+        node: exp.Expr | None,
+        scope: _Scope,
+        position: Position,
+        subtype: Subtype,
+    ) -> list[Dep]:
+        """Collect the column references of one expression, and return what it is computed from.
+
+        `subtype` is the subtype of a column that the expression is, which each node below adjusts (ADR 0010).
+        """
+        if node is None:
+            return []
+        for column, fact in _child_facts(node):
+            self.facts[id(column)] = fact
         match node:
-            case None:
-                pass
             case exp.Query() | exp.Subquery():
-                self.query(node, scope, scope.ctes)
+                local = self.query(node, scope, scope.ctes)
                 self._single_row(node, scope)
+                deps = [*(d for f in local.flows for d in f), *local.rows]
+                return [(up, combine(subtype, sub)) for up, sub in deps]
             case exp.Column():
-                self._column(node, scope, position)
+                return self._column(node, scope, position, subtype)
             case exp.Window():
-                self.expression(node.this, scope, position)
-                for partition in node.args.get("partition_by") or ():
-                    self.expression(partition, scope, "group_by")
-                self.expression(node.args.get("order"), scope, "order_by")
+                window = combine(subtype, "WINDOW")
+                return [
+                    *self.expression(node.this, scope, position, subtype),
+                    *(
+                        d
+                        for p in node.args.get("partition_by") or ()
+                        for d in self.expression(p, scope, "group_by", window)
+                    ),
+                    *self.expression(node.args.get("order"), scope, "order_by", window),
+                ]
             case exp.Order() if not isinstance(node.parent, exp.Query):
                 # The `ORDER BY` inside `LISTAGG ... WITHIN GROUP`.
-                self.expression(node.this, scope, position)
-                for ordered in node.expressions:
-                    self.expression(ordered, scope, "order_by")
+                sort = combine(subtype, "SORT")
+                inner = combine(subtype, "AGGREGATION")
+                return [
+                    *self.expression(node.this, scope, position, inner),
+                    *(
+                        d
+                        for o in node.expressions
+                        for d in self.expression(o, scope, "order_by", sort)
+                    ),
+                ]
+            case exp.Count() if _whole_rows(node):
+                # COUNT(*), COUNT(1) and COUNT of a literal read whole rows of every table in FROM (ADR 0010).
+                counted = combine(subtype, "AGGREGATION")
+                return [
+                    (Whole(t, star=False), counted)
+                    for t in sorted(_tables(scope), key=_order)
+                ]
+            case exp.Case() | exp.DecodeCase():
+                return self._conditional(node, scope, position, subtype)
             case _:
                 position = _inner_position(node, position)
-                for column, fact in _child_facts(node):
-                    self.facts[id(column)] = fact
-                for child in node.iter_expressions():
-                    self.expression(child, scope, position)
+                inner = _step(node, subtype)
+                return [
+                    d
+                    for child in node.iter_expressions()
+                    for d in self.expression(child, scope, position, inner)
+                ]
+
+    def _conditional(
+        self,
+        node: exp.Case | exp.DecodeCase,
+        scope: _Scope,
+        position: Position,
+        subtype: Subtype,
+    ) -> list[Dep]:
+        """Return what a `CASE` or a `DECODE` is computed from: its conditions select, and its results compute."""
+        condition = combine(subtype, "CONDITIONAL")
+        result = combine(subtype, "TRANSFORMATION")
+        if isinstance(node, exp.DecodeCase):
+            rest = node.expressions[1:]
+            conditions = [node.expressions[0], *rest[0 : 2 * (len(rest) // 2) : 2]]
+        else:
+            conditions = [node.this, *(i.this for i in node.args["ifs"])]
+        results = _results(node)
+        return [
+            *(
+                d
+                for c in conditions
+                for d in self.expression(c, scope, position, condition)
+            ),
+            *(d for r in results for d in self.expression(r, scope, position, result)),
+        ]
 
     def _equalities(self, clause: exp.Expr | None, scope: _Scope) -> None:
         """Record each AND-connected bare `=` between columns of two table references (ADR 0002)."""
@@ -698,53 +917,78 @@ class _Walker:
         if compared and isinstance(source, _TableSource):
             self.keys.append(KeyEvidence(source.key, compared, "single_row"))
 
-    def _column(self, node: exp.Column, scope: _Scope, position: Position) -> None:
+    def _column(
+        self, node: exp.Column, scope: _Scope, position: Position, subtype: Subtype
+    ) -> list[Dep]:
         if isinstance(node.this, exp.Star):
-            return
+            return []
         name = _name(node.this)
         fact = self.facts.pop(id(node), Fact())
         if not node.this.quoted and name in _PSEUDOCOLUMNS:
-            return
+            return []
         qualifier = node.args.get("table")
         if qualifier is not None:
             owner = node.args.get("db")
             source = _lookup(scope, _name(owner) if owner else None, _name(qualifier))
-            self._emit(name, source, position, fact)
-        elif node.this.quoted or name not in _FUNCTIONS_READ_AS_COLUMNS:
-            if not (position == "order_by" and name in scope.aliases):
-                self._unqualified(name, scope, position, fact)
+            return self._emit(name, source, position, subtype, fact)
+        if not node.this.quoted and name in _FUNCTIONS_READ_AS_COLUMNS:
+            return []
+        if position == "order_by" and name in scope.aliases:
+            # An `ORDER BY` name that matches a select-list alias names that position.
+            return [(up, combine(subtype, sub)) for up, sub in scope.aliases[name]]
+        return self._unqualified(name, scope, position, subtype, fact)
 
     def _unqualified(
-        self, name: str, scope: _Scope, position: Position, fact: Fact
-    ) -> None:
+        self,
+        name: str,
+        scope: _Scope,
+        position: Position,
+        subtype: Subtype,
+        fact: Fact,
+    ) -> list[Dep]:
         layers: list[tuple[_TableSource, ...]] = []
         current: _Scope | None = scope
         while current is not None:
             if name in current.using:
-                for source in current.using[name]:
-                    self._emit(name, source, position, fact)
-                return
+                return [
+                    d
+                    for source in current.using[name]
+                    for d in self._emit(name, source, position, subtype, fact)
+                ]
             holders = [s for s in current.sources.values() if _holds(s, name)]
-            if any(isinstance(s, _LocalSource) for s in holders):
+            local = next((s for s in holders if isinstance(s, _LocalSource)), None)
+            if local is not None:
                 # A local relation whose names are known holds the name alone, because Oracle raises ORA-00918 otherwise.
                 # One whose names a `*` hides may hold it, so the reference gives no evidence.
-                return
+                return self._emit(name, local, position, subtype, fact)
             if holders:
                 layers.append(tuple(s for s in holders if isinstance(s, _TableSource)))
             current = current.parent
-        if layers:
-            if len(layers[0]) == 1 and layers[0][0].optional:
-                fact = replace(fact, nullable=False)
-            keys = tuple(tuple(s.key for s in layer) for layer in layers)
-            self.refs.append(ColumnRef(name, keys, position, fact))
+        if not layers:
+            return []
+        if len(layers[0]) == 1 and layers[0][0].optional:
+            fact = replace(fact, nullable=False)
+        keys = tuple(tuple(s.key for s in layer) for layer in layers)
+        ref = ColumnRef(name, keys, position, fact)
+        self.refs.append(ref)
+        return [(ref, subtype)]
 
     def _emit(
-        self, name: str, source: _Source, position: Position, fact: Fact = _NOTHING
-    ) -> None:
-        if isinstance(source, _TableSource):
-            if source.optional:
-                fact = replace(fact, nullable=False)
-            self.refs.append(ColumnRef(name, ((source.key,),), position, fact))
+        self,
+        name: str,
+        source: _Source,
+        position: Position,
+        subtype: Subtype,
+        fact: Fact = _NOTHING,
+    ) -> list[Dep]:
+        """Record a reference to a column of a source, and return what the column is computed from."""
+        if isinstance(source, _LocalSource):
+            return [(up, combine(subtype, sub)) for up, sub in source.deps(name)]
+        if source.optional:
+            fact = replace(fact, nullable=False)
+        ref = ColumnRef(name, ((source.key,),), position, fact)
+        self.refs.append(ref)
+        return [(ref, subtype)]
 
 
 def _lookup(scope: _Scope, owner: str | None, qualifier: str) -> _Source:
@@ -946,14 +1190,18 @@ def _projection_name(projection: exp.Expr) -> str:
 
 
 def _expand(
-    node: exp.Select, scope: _Scope, texts: dict[int, str]
-) -> tuple[tuple[Item, ...], tuple[Value, ...]]:
-    """Return a select's items and what each value shows, expanding a `*` over local relations.
+    node: exp.Select,
+    scope: _Scope,
+    texts: dict[int, str],
+    projected: dict[int, list[Dep]],
+) -> tuple[tuple[Item, ...], tuple[Value, ...], tuple[tuple[Dep, ...], ...]]:
+    """Return a select's items, what each value shows, and what each is computed from, expanding a `*` over local relations.
 
     A `*` over a table keeps one item, the table, which a declaration can expand later (ADR 0008).
     """
     items: list[Item] = []
     values: list[Value] = []
+    flows: list[tuple[Dep, ...]] = []
     for projection in node.expressions:
         match projection:
             case exp.Star():
@@ -971,15 +1219,57 @@ def _expand(
                         else projection
                     )
                 )
+                flows.append(tuple(projected[id(projection)]))
                 continue
         for source in sources:
             if isinstance(source, _TableSource):
                 items.append(source.key)
                 values.append(source.key)
+                flows.append(((Whole(source.key, star=True), "IDENTITY"),))
             else:
                 items.extend(source.columns)
                 values.extend(source.values or (Fact(),) * len(source.columns))
-    return tuple(items), tuple(values)
+                flows.extend(source.flows or ((),) * len(source.columns))
+    return tuple(items), tuple(values), tuple(flows)
+
+
+def _tables(scope: _Scope) -> frozenset[TableKey]:
+    """Return the tables that a scope's FROM reads, through its local relations."""
+    found: set[TableKey] = set()
+    for source in scope.sources.values():
+        found |= {source.key} if isinstance(source, _TableSource) else source.tables
+    return frozenset(found)
+
+
+def _order(key: TableKey) -> tuple[str, str]:
+    return (key[0] or "", key[1])
+
+
+def _whole_rows(node: exp.Count) -> bool:
+    """Return whether a `COUNT` reads whole rows: `COUNT(*)`, `COUNT(1)` or `COUNT` of a literal."""
+    argument = node.this
+    return isinstance(argument, exp.Star | exp.Literal) or argument is None
+
+
+def _step(node: exp.Expr, subtype: Subtype) -> Subtype:
+    """Return the subtype of the columns below a node, inside a path whose subtype so far is `subtype`."""
+    if subtype == "FILTER" and isinstance(node, exp.EQ) and _equates_two_tables(node):
+        # A `WHERE` conjunct that equates bare columns of two table references is a join condition.
+        return "JOIN"
+    if isinstance(
+        node,
+        exp.Paren
+        | exp.Alias
+        | exp.Where
+        | exp.Group
+        | exp.Having
+        | exp.Order
+        | exp.Ordered,
+    ):
+        return subtype
+    return combine(
+        subtype, "AGGREGATION" if isinstance(node, exp.AggFunc) else "TRANSFORMATION"
+    )
 
 
 # --- types, nullable and observed values (ADR 0003, ADR 0007) -------------------------------

@@ -1,0 +1,11 @@
+file,statement,downstream_table,downstream_column,upstream_table,upstream_column,type,subtype,outcome,reason
+016_unqualified_columns_in_join.sql,1,,CREDIT_LIMIT,SALES.CUSTOMERS,CREDIT_LIMIT,DIRECT,IDENTITY,ambiguous,"ADR 0001: 016 names the column unqualified over two tables, so the dependency gives evidence to no candidate"
+016_unqualified_columns_in_join.sql,1,,CUSTOMER_NAME,SALES.CUSTOMERS,CUSTOMER_NAME,DIRECT,IDENTITY,ambiguous,"ADR 0001: 016 names the column unqualified over two tables, so the dependency gives evidence to no candidate"
+016_unqualified_columns_in_join.sql,1,,ORDER_DATE,SALES.ORDERS,ORDER_DATE,DIRECT,IDENTITY,ambiguous,"ADR 0001: 016 names the column unqualified over two tables, so the dependency gives evidence to no candidate"
+016_unqualified_columns_in_join.sql,1,,ORDER_ID,SALES.ORDERS,ORDER_ID,DIRECT,IDENTITY,ambiguous,"ADR 0001: 016 names the column unqualified over two tables, so the dependency gives evidence to no candidate"
+038_daily_reports.sql,1,,NEW_ORDERS,SALES.ORDERS,,DIRECT,AGGREGATION,miss,"ADR 0010: COUNT(*) reads whole rows, and ichnos does not yet record a dependency on whole rows"
+038_daily_reports.sql,2,,NEW_CUSTOMERS,SALES.CUSTOMERS,,DIRECT,AGGREGATION,miss,"ADR 0010: COUNT(*) reads whole rows, and ichnos does not yet record a dependency on whole rows"
+039_rep_sales_inline_view.sql,1,,ORDER_COUNT,SALES.ORDERS,,DIRECT,AGGREGATION,miss,"ADR 0010: COUNT(*) reads whole rows, and ichnos does not yet record a dependency on whole rows"
+047_create_customer_daily_sales.sql,1,MART.CUSTOMER_DAILY_SALES,LINE_COUNT,MART.ORDER_LINE_FACTS,,DIRECT,AGGREGATION,miss,"ADR 0010: COUNT(*) reads whole rows, and ichnos does not yet record a dependency on whole rows"
+048_merge_customer_daily_sales.sql,1,MART.CUSTOMER_DAILY_SALES,LINE_COUNT,MART.ORDER_LINE_FACTS,,DIRECT,AGGREGATION,miss,"ADR 0010: COUNT(*) reads whole rows, and ichnos does not yet record a dependency on whole rows"
+054_segment_summary.sql,1,,CUSTOMER_COUNT,MART.CUSTOMER_SEGMENTS,,DIRECT,AGGREGATION,miss,"ADR 0010: COUNT(*) reads whole rows, and ichnos does not yet record a dependency on whole rows"

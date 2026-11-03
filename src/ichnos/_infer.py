@@ -108,6 +108,8 @@ class ReportEvidence:
 
     index: int
     outputs: tuple[tuple[str, Fact], ...]
+    # The output column names of each select-list item, which a `*` can expand to several or none.
+    items: tuple[tuple[str, ...], ...]
 
 
 @dataclass(slots=True)
@@ -119,6 +121,7 @@ class Evidence:
     # The queries behind each relationship, with its sides in name order (ADR 0002).
     relationships: dict[tuple[Side, Side], set[int]]
     reports: list[ReportEvidence]
+    declarations: Declarations
 
 
 def relationship(
@@ -143,7 +146,7 @@ def combine(traces: Sequence[Trace]) -> Evidence:
             tables[key].read.add(index)
         for write in trace.writes:
             tables[write.table].write.add(index)
-    declarations = _Declarations(traces)
+    declarations = Declarations(traces)
     ambiguous: dict[AmbiguousColumn, None] = {}
     for index, trace in enumerate(traces):
         for ref in trace.refs:
@@ -164,11 +167,12 @@ def combine(traces: Sequence[Trace]) -> Evidence:
         list(ambiguous),
         _relationships(traces, declarations),
         _reports(traces, declarations),
+        declarations,
     )
 
 
 def _reports(
-    traces: Sequence[Trace], declarations: _Declarations
+    traces: Sequence[Trace], declarations: Declarations
 ) -> list[ReportEvidence]:
     """Return each query that reads a table and writes none, which is a report (ADR 0009)."""
     reports: list[ReportEvidence] = []
@@ -176,27 +180,34 @@ def _reports(
         if trace.statement != "select" or not trace.reads:
             continue
         outputs: list[tuple[str, Fact]] = []
+        items: list[int] = []
         for item, value in trace.outputs:
-            if isinstance(item, str):
-                outputs.append((item, value if isinstance(value, Fact) else Fact()))
-            else:
-                # A `*` that a declaration expands gives its columns, and one that stays unexpanded gives none.
-                outputs.extend(
-                    (name, Fact()) for name in declarations.columns(item) or ()
-                )
+            # A `*` that a declaration expands gives its columns, and one that stays unexpanded gives none.
+            names = (
+                [item] if isinstance(item, str) else declarations.columns(item) or ()
+            )
+            fact = value if isinstance(value, Fact) else Fact()
+            outputs.extend((name, fact) for name in names)
+            items.append(len(names))
+        unique = _unique([n for n, _ in outputs])
         reports.append(
             ReportEvidence(
                 index,
-                tuple(
-                    zip(
-                        _unique([n for n, _ in outputs]),
-                        (f for _, f in outputs),
-                        strict=True,
-                    )
-                ),
+                tuple(zip(unique, (f for _, f in outputs), strict=True)),
+                _split(unique, items),
             )
         )
     return reports
+
+
+def _split(names: list[str], sizes: list[int]) -> tuple[tuple[str, ...], ...]:
+    """Split a list of names into consecutive groups of the given sizes."""
+    groups: list[tuple[str, ...]] = []
+    start = 0
+    for size in sizes:
+        groups.append(tuple(names[start : start + size]))
+        start += size
+    return tuple(groups)
 
 
 def _unique(names: list[str]) -> list[str]:
@@ -215,7 +226,7 @@ def _unique(names: list[str]) -> list[str]:
 
 
 def _relationships(
-    traces: Sequence[Trace], declarations: _Declarations
+    traces: Sequence[Trace], declarations: Declarations
 ) -> dict[tuple[Side, Side], set[int]]:
     found: defaultdict[tuple[Side, Side], set[int]] = defaultdict(set)
     for index, trace in enumerate(traces):
@@ -231,7 +242,7 @@ def _relationships(
     return dict(found)
 
 
-class _Declarations:
+class Declarations:
     """The declarations of every creating query, and the contradictions that stop ichnos using them (ADR 0008)."""
 
     def __init__(self, traces: Sequence[Trace]) -> None:
