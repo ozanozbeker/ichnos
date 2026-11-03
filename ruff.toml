@@ -27,6 +27,11 @@ unfixable = [
 ]
 
 [lint.per-file-ignores]
+# Each module that may import a banned library (issue 16, ADR 0015).
+"src/ichnos/_read.py" = ["TID251"]
+"src/ichnos/_cli.py" = ["TID251"]
+"tests/answer_key.py" = ["TID251"]
+
 "**/__init__.py" = [
   "D104",  # pydocstyle > undocumented-public-package
   "F401",  # Pyflakes > unused-import
@@ -43,6 +48,10 @@ unfixable = [
   "S101",  # flake8-bandit > assert
   "SLF001",  # flake8-self > private-member-access
 ]
+
+[lint.flake8-tidy-imports.banned-api]
+"cyclopts".msg = "Only `ichnos._cli` imports cyclopts."
+"sqlglot".msg = "Only `ichnos._read` imports sqlglot (ADR 0004)."
 
 [lint.pydocstyle]
 convention = "numpy"

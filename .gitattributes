@@ -1,0 +1,2 @@
+# Golden files keep `\n` on Windows, so the comparison and the diff stay byte for byte (ADR 0015).
+tests/__snapshots__/** text eol=lf
