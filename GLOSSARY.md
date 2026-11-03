@@ -105,6 +105,14 @@ _Avoid_: naming evidence, naming hint, naming convention
 A column's observed values are never its full set.
 _Avoid_: enum, allowed value, domain, sample value
 
+**Type**: An inferred claim that a column holds text, numbers, datetimes or intervals.
+ichnos never claims an Oracle data type such as `VARCHAR2(10)`.
+_Avoid_: data type, kind (for a type)
+
+**Nullable**: An inferred claim that a column can hold `NULL`.
+ichnos never claims that a column is `NOT NULL`.
+_Avoid_: optional
+
 **Ambiguity**: A point where the corpus admits more than one reading, such as an unqualified column in a query over two tables. ichnos records every candidate reading and picks none.
 _Avoid_: conflict, uncertainty, warning
 
