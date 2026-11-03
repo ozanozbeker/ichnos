@@ -1,0 +1,164 @@
+Project ichnos {
+  database_type: 'Oracle'
+  Note: '''
+  Join path between REF.COUNTRIES, INV.PRODUCTS: 7 of 32 tables.
+  Inferred from 60 queries, with no database connection.
+  A column with no type evidence has the type `unknown`.
+  `null` claims a column can hold NULL. ichnos never claims NOT NULL.
+  `>?` means the left side refers to a key on the right.
+  `?<>?` means the direction is unknown.
+  A table with no `kind` may list only some of its columns.
+  '''
+}
+
+Table INV.PRODUCTS [read: 7, keys: 'PRODUCT_ID: name match <S>_ID'] {
+  CATEGORY_ID unknown
+  CREATED_AT datetime
+  LIST_PRICE unknown
+  PRODUCT_ID unknown
+  PRODUCT_NAME unknown
+  SKU unknown
+  STATUS text [observed: 'ACTIVE']
+
+  indexes {
+    PRODUCT_ID [unique]
+  }
+}
+
+Table REF.COUNTRIES [read: 3, keys: 'COUNTRY_CODE: name match <S>_CODE'] {
+  COUNTRY_CODE unknown
+  COUNTRY_NAME unknown
+
+  indexes {
+    COUNTRY_CODE [unique]
+  }
+}
+
+Table INV.WAREHOUSES [read: 3, keys: 'ID: name match ID; WAREHOUSE_CODE: name match <S>_CODE'] {
+  COUNTRY_CODE unknown
+  ID unknown
+  NAME unknown
+  WAREHOUSE_CODE unknown
+
+  indexes {
+    ID [unique]
+    WAREHOUSE_CODE [unique]
+  }
+}
+
+Table SALES.CUSTOMER_ADDRESSES [read: 1, keys: 'ADDRESS_ID: name match <S>_ID'] {
+  ADDRESS_ID unknown
+  CITY unknown
+  COUNTRY_CODE unknown
+
+  indexes {
+    ADDRESS_ID [unique]
+  }
+}
+
+Table SALES.ORDER_LINES [read: 9, write: 1] {
+  DISCOUNT_PCT number [null, nullable: 3]
+  LINE_NO unknown
+  ORDER_ID unknown
+  PRODUCT_ID unknown
+  QUANTITY number
+  UNIT_PRICE number
+}
+
+Table INV.STOCK_LEVELS [read: 3, write: 2, keys: '(PRODUCT_ID, WAREHOUSE_ID): merge 1'] {
+  PRODUCT_ID unknown
+  QTY_ON_HAND number [observed: '0']
+  REORDER_POINT unknown
+  UPDATED_AT datetime
+  WAREHOUSE_ID unknown
+
+  indexes {
+    (PRODUCT_ID, WAREHOUSE_ID) [unique]
+  }
+}
+
+Table SALES.ORDERS [read: 19, write: 1, keys: 'ORDER_ID: name match <S>_ID, generated 1', ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
+  BILL_TO_ADDRESS_ID unknown
+  CREATED_AT datetime
+  CURRENCY_CODE unknown
+  CUSTOMER_ID unknown
+  ORDER_DATE datetime
+  ORDER_ID number
+  ORDER_TOTAL number
+  SALES_REP_ID number [null, nullable: 1]
+  SHIP_TO_ADDRESS_ID unknown
+  STATUS text [observed: 'CANCELLED, NEW, PAID, SHIPPED']
+
+  indexes {
+    ORDER_ID [unique]
+  }
+}
+
+Ref "join 1": INV.STOCK_LEVELS.PRODUCT_ID ?<>? SALES.ORDER_LINES.PRODUCT_ID
+Ref "join 1": INV.STOCK_LEVELS.WAREHOUSE_ID >? INV.WAREHOUSES.ID
+Ref "join 1": INV.WAREHOUSES.COUNTRY_CODE >? REF.COUNTRIES.COUNTRY_CODE
+Ref "join 1": SALES.CUSTOMER_ADDRESSES.COUNTRY_CODE >? REF.COUNTRIES.COUNTRY_CODE
+Ref "join 1": SALES.ORDERS.BILL_TO_ADDRESS_ID >? SALES.CUSTOMER_ADDRESSES.ADDRESS_ID
+Ref "join 1": SALES.ORDERS.SHIP_TO_ADDRESS_ID >? SALES.CUSTOMER_ADDRESSES.ADDRESS_ID
+Ref "join 3": SALES.ORDER_LINES.ORDER_ID >? SALES.ORDERS.ORDER_ID
+Ref "join 4": SALES.ORDER_LINES.PRODUCT_ID >? INV.PRODUCTS.PRODUCT_ID
+
+// 034_ship_and_bill_addresses
+// -- ORDERS references CUSTOMER_ADDRESSES twice, once per role.
+// SELECT o.order_id,
+//        ship.city AS ship_city,
+//        ship_country.country_name AS ship_country,
+//        bill.city AS bill_city,
+//        bill_country.country_name AS bill_country
+//   FROM sales.orders o
+//   JOIN sales.customer_addresses ship ON ship.address_id = o.ship_to_address_id
+//   JOIN ref.countries ship_country ON ship_country.country_code = ship.country_code
+//   JOIN sales.customer_addresses bill ON bill.address_id = o.bill_to_address_id
+//   JOIN ref.countries bill_country ON bill_country.country_code = bill.country_code
+//  WHERE ship.country_code <> bill.country_code
+
+// 045_create_order_line_facts
+// CREATE TABLE mart.order_line_facts AS
+// SELECT o.order_id,
+//        ol.line_no,
+//        o.customer_id,
+//        TRUNC(o.order_date) AS sales_date,
+//        o.currency_code,
+//        ol.product_id,
+//        p.category_id,
+//        ol.quantity AS units,
+//        ol.quantity * ol.unit_price * (1 - NVL(ol.discount_pct, 0) / 100) AS net_amount
+//   FROM sales.orders o
+//   JOIN sales.order_lines ol ON ol.order_id = o.order_id
+//   JOIN inv.products p ON p.product_id = ol.product_id
+//  WHERE o.status <> 'CANCELLED'
+
+// 008_stock_by_warehouse
+// SELECT w.warehouse_code,
+//        w.name AS warehouse_name,
+//        s.product_id,
+//        s.qty_on_hand,
+//        s.reorder_point
+//   FROM inv.stock_levels s
+//   JOIN inv.warehouses w
+//     ON w.id = s.warehouse_id
+//  WHERE s.qty_on_hand <= s.reorder_point
+
+// 043_shipments_per_warehouse_country
+// SELECT cn.country_name, w.warehouse_code, COUNT(s.shipment_id) AS shipments
+//   FROM inv.warehouses w
+//   JOIN ref.countries cn ON cn.country_code = w.country_code
+//   LEFT JOIN inv.shipments s ON s.warehouse_id = w.id
+//  GROUP BY cn.country_name, w.warehouse_code
+
+// 024_update_stock_after_shipment
+// UPDATE inv.stock_levels sl
+//    SET sl.qty_on_hand = sl.qty_on_hand - (SELECT SUM(shl.qty_shipped)
+//                                             FROM inv.shipment_lines shl
+//                                             JOIN sales.order_lines ol
+//                                               ON ol.order_id = shl.order_id
+//                                              AND ol.line_no = shl.line_no
+//                                            WHERE shl.shipment_id = :shipment_id
+//                                              AND ol.product_id = sl.product_id),
+//        sl.updated_at = SYSDATE
+//  WHERE sl.warehouse_id = (SELECT s.warehouse_id FROM inv.shipments s WHERE s.shipment_id = :shipment_id)

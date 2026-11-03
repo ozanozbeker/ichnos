@@ -493,6 +493,39 @@ class Report:
     output_columns: tuple[OutputColumn, ...] = field(compare=False, repr=False)
     ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
+    def output_column(self, name: str) -> OutputColumn:
+        """Return the output column with a name, which compares in dictionary form as Oracle folds it.
+
+        Parameters
+        ----------
+        name
+            An unquoted name, which matches without regard to case, or a quoted one, which keeps its case.
+
+        Returns
+        -------
+        :
+            The output column.
+
+        Raises
+        ------
+        KeyError
+            When the report has no such output column.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer({"r": "SELECT o.status AS state FROM sales.orders o"})
+        graph.reports[0].output_column("state")
+        ```
+        """
+        folded = _fold(name)
+        for column in self.output_columns:
+            if column.name == folded:
+                return column
+        raise KeyError(name)
+
 
 type End = Table | Column | Report | OutputColumn
 
@@ -610,6 +643,272 @@ class Graph:
     unparsed: tuple[UnparsedQuery, ...]
     ambiguities: tuple[Ambiguity, ...]
 
+    def table(self, name: str) -> Table:
+        """Return the table with a name, which parses as Oracle parses it.
+
+        An unquoted part becomes uppercase, a quoted part keeps its case, and `@link` stays part of the name.
+        So `X` and `MART.X` are different tables.
+
+        Parameters
+        ----------
+        name
+            The table's name, with its owner when it has one, such as `sales.orders`.
+
+        Returns
+        -------
+        :
+            The table.
+
+        Raises
+        ------
+        KeyError
+            When the graph holds no such table.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer({"q": "SELECT o.status FROM sales.orders o"})
+        graph.table("sales.orders")
+        ```
+        """
+        parts = _parts(name)
+        if len(parts) > 2:  # noqa: PLR2004 # an owner and a name
+            raise KeyError(name)
+        owner, table = (None, parts[0]) if len(parts) == 1 else parts
+        for found in self.tables:
+            if (found.owner, found.name) == (owner, table):
+                return found
+        raise KeyError(name)
+
+    def report(self, name: str) -> Report:
+        """Return the report with a name, which keeps its file's case.
+
+        Parameters
+        ----------
+        name
+            The report's name: its file key, plus `#N` when the file holds several queries.
+
+        Returns
+        -------
+        :
+            The report.
+
+        Raises
+        ------
+        KeyError
+            When the graph holds no such report.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer({"daily": "SELECT COUNT(*) AS n FROM sales.orders"})
+        graph.report("daily")
+        ```
+        """
+        for report in self.reports:
+            if report.name == name:
+                return report
+        raise KeyError(name)
+
+    def neighborhood(self, tables: Iterable[Table], depth: int = 1) -> Slice:
+        """Return the tables within some relationships of one or more centers (ADR 0012).
+
+        The walk follows relationships only, never dependencies, and every table in it keeps all its columns.
+
+        Parameters
+        ----------
+        tables
+            The center tables.
+        depth
+            The most relationships between a center and a table in the slice. The default is 1.
+
+        Returns
+        -------
+        :
+            The slice, which `dbml` writes.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer(
+            {
+                "q": "SELECT 1 FROM sales.orders o JOIN sales.customers c ON c.customer_id = o.customer_id"
+            }
+        )
+        graph.neighborhood([graph.table("sales.orders")]).distances
+        ```
+        """
+        centers = tuple(dict.fromkeys(tables))
+        neighbors = _neighbors(self.relationships)
+        found: dict[Table, int] = dict.fromkeys(centers, 0)
+        frontier = list(centers)
+        for distance in range(1, depth + 1):
+            frontier = [n for t in frontier for n, _ in neighbors[t] if n not in found]
+            found.update(dict.fromkeys(frontier, distance))
+        joined = {n for t in found for n, _ in neighbors[t]} - set(found)
+        upstream = (r.upstream for r in self.rollups if r.downstream in centers)
+        downstream = (r.downstream for r in self.rollups if r.upstream in centers)
+        outside = {
+            "joins": _ends(joined),
+            "upstream": _ends(u for u in upstream if u not in found),
+            "downstream": _ends(d for d in downstream if d not in found),
+        }
+        distances: dict[Table | Report, int] = dict(found.items())
+        return Slice(
+            "neighborhood",
+            centers,
+            depth,
+            None,
+            distances,
+            {t: t.columns for t in found},
+            tuple(
+                r
+                for r in self.relationships
+                if {s[0].table for s in r.sides} <= set(found)
+            ),
+            (),
+            (),
+            outside,
+            (),
+            self,
+        )
+
+    def join_path(self, tables: Iterable[Table]) -> Slice:
+        """Return the union of every shortest join path between each pair of tables (ADR 0012).
+
+        A path's length is its number of relationships, whatever their direction or evidence.
+
+        Parameters
+        ----------
+        tables
+            Two or more tables.
+
+        Returns
+        -------
+        :
+            The slice, which `dbml` writes.
+
+        Examples
+        --------
+        ```python
+        import ichnos
+
+        graph = ichnos.infer(
+            {
+                "a": "SELECT 1 FROM s.a a JOIN s.b b ON b.id = a.b_id",
+                "b": "SELECT 1 FROM s.b b JOIN s.c c ON c.id = b.c_id",
+            }
+        )
+        graph.join_path([graph.table("s.a"), graph.table("s.c")]).distances
+        ```
+        """
+        starts = tuple(dict.fromkeys(tables))
+        neighbors = _neighbors(self.relationships)
+        found = {t: _distances(t, neighbors) for t in starts}
+        nodes: set[Table] = set(starts)
+        edges: set[Relationship] = set()
+        unconnected: list[Table] = []
+        for index, a in enumerate(starts):
+            for b in starts[index + 1 :]:
+                da, db = found[a], found[b]
+                if b not in da:
+                    unconnected += [t for t in (a, b) if t not in unconnected]
+                    continue
+                length = da[b]
+                nodes |= {t for t in da if t in db and da[t] + db[t] == length}
+                edges |= {
+                    r
+                    for t, others in neighbors.items()
+                    for other, r in others
+                    if t in da and other in db and da[t] + 1 + db[other] == length
+                }
+        distances: dict[Table | Report, int] = {
+            t: min(d[t] for d in found.values() if t in d) for t in nodes
+        }
+        return Slice(
+            "join path",
+            starts,
+            None,
+            None,
+            distances,
+            {t: t.columns for t in nodes},
+            tuple(r for r in self.relationships if r in edges),
+            (),
+            (),
+            {},
+            tuple(unconnected),
+            self,
+        )
+
+
+type SliceKind = Literal["neighborhood", "join path", "upstream", "downstream"]
+type Indirect = Literal["first_hop", "all"]
+
+
+@dataclass(frozen=True, slots=True)
+class Slice:
+    """A part of the graph that one question selects, which `dbml` writes to paste into an LLM chat (ADR 0012).
+
+    A slice holds what the writer needs and nothing the writer computes, so it never changes with the budget.
+
+    Attributes
+    ----------
+    kind
+        The walk that selected it.
+    starts
+        The walk's start: the centers of a neighborhood, the ends of a join path, or the start of a lineage walk.
+    depth
+        A neighborhood's depth, or `None`.
+    indirect
+        Which indirect dependencies a lineage walk keeps, or `None`.
+    distances
+        Each table's and report's distance from the nearest start.
+    columns
+        The columns and output columns that each table and report keeps.
+    relationships
+        The relationships between tables in the slice.
+    dependencies
+        The dependencies that a lineage slice writes.
+    rollups
+        The rollups that a downstream slice of a table writes.
+    outside
+        The tables and reports outside the slice that the header names, by why it names them.
+    unconnected
+        The tables of a join path that no relationship connects.
+    graph
+        The graph the slice comes from.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer({"q": "SELECT o.status FROM sales.orders o"})
+    graph.neighborhood([graph.table("sales.orders")])
+    ```
+    """
+
+    kind: SliceKind
+    starts: tuple[Table | Column | Report | OutputColumn, ...]
+    depth: int | None = field(repr=False)
+    indirect: Indirect | None = field(repr=False)
+    distances: Mapping[Table | Report, int] = field(repr=False)
+    columns: Mapping[Table | Report, tuple[Column | OutputColumn, ...]] = field(
+        repr=False
+    )
+    relationships: tuple[Relationship, ...] = field(repr=False)
+    dependencies: tuple[Dependency, ...] = field(repr=False)
+    rollups: tuple[Rollup, ...] = field(repr=False)
+    outside: Mapping[str, tuple[Table | Report, ...]] = field(repr=False)
+    unconnected: tuple[Table, ...] = field(repr=False)
+    graph: Graph = field(repr=False)
+
 
 def count(queries: Iterable[Query]) -> int:
     """Return an evidence count: the number of distinct texts among the queries (ADR 0001)."""
@@ -688,6 +987,59 @@ _SUBTYPES: tuple[Subtype, ...] = (
     "WINDOW",
     "CONDITIONAL",
 )
+
+
+def _parts(name: str) -> list[str]:
+    """Split a dotted name outside its quotes, and fold each part as Oracle does."""
+    parts: list[str] = []
+    current, quoted = "", False
+    for char in name:
+        if char == '"':
+            quoted = not quoted
+        if char == "." and not quoted:
+            parts.append(current)
+            current = ""
+        else:
+            current += char
+    return [_fold(p) for p in [*parts, current]]
+
+
+def _neighbors(
+    relationships: Iterable[Relationship],
+) -> defaultdict[Table, list[tuple[Table, Relationship]]]:
+    """Return each table's neighbors over relationships, which a walk follows either way."""
+    neighbors: defaultdict[Table, list[tuple[Table, Relationship]]] = defaultdict(list)
+    for relationship in relationships:
+        a, b = (side[0].table for side in relationship.sides)
+        neighbors[a].append((b, relationship))
+        neighbors[b].append((a, relationship))
+    return neighbors
+
+
+def _distances(
+    start: Table, neighbors: Mapping[Table, list[tuple[Table, Relationship]]]
+) -> dict[Table, int]:
+    """Return each table's distance from a start over relationships, by breadth-first search."""
+    distances = {start: 0}
+    frontier = [start]
+    level = 0
+    while frontier:
+        level += 1
+        found = [
+            n for t in frontier for n, _ in neighbors.get(t, ()) if n not in distances
+        ]
+        frontier = list(dict.fromkeys(found))
+        distances.update(dict.fromkeys(frontier, level))
+    return distances
+
+
+def _ends(ends: Iterable[Table | Report]) -> tuple[Table | Report, ...]:
+    """Sort tables by name before reports by name, without repeats."""
+
+    def key(end: Table | Report) -> tuple[int, str, str]:
+        return (1, "", end.name) if isinstance(end, Report) else (0, *_order(end))
+
+    return tuple(sorted(set(ends), key=key))
 
 
 def _fold(name: str) -> str:

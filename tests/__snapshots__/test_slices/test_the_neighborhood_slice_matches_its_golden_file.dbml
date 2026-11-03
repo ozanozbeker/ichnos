@@ -1,0 +1,142 @@
+Project ichnos {
+  database_type: 'Oracle'
+  Note: '''
+  Neighborhood of SALES.ORDERS at depth 1: 6 of 32 tables.
+  Inferred from 60 queries, with no database connection.
+  A column with no type evidence has the type `unknown`.
+  `null` claims a column can hold NULL. ichnos never claims NOT NULL.
+  `>?` means the left side refers to a key on the right.
+  `?<>?` means the direction is unknown.
+  A table with no `kind` may list only some of its columns.
+  Outside the slice, these tables join it: HR.EMPLOYEES, INV.PRODUCTS, INV.SHIPMENT_LINES, INV.STOCK_LEVELS, MART.LAPSED_CUSTOMERS, REF.COUNTRIES, SALES.PROMOTIONS.
+  Downstream of the centers: MART.ORDER_LINE_FACTS, report."002_orders_with_customers", report."005_customers_without_orders", report."011_monthly_revenue_by_currency", report."012_top_customers_rownum", report."013_orders_with_payment", report."015_last_payment_per_order", report."016_unqualified_columns_in_join", report."021_orders_with_archive", report."027_orders_with_promotions", report."029_order_status_labels", report."030_latest_order_per_customer", report."033_hint_and_binds", report."034_ship_and_bill_addresses", report."038_daily_reports#1", report."039_rep_sales_inline_view", report."042_join_using", report."044_order_payment_balance".
+  '''
+}
+
+Table SALES.ORDERS [read: 19, write: 1, keys: 'ORDER_ID: name match <S>_ID, generated 1', ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
+  BILL_TO_ADDRESS_ID unknown
+  CREATED_AT datetime
+  CURRENCY_CODE unknown
+  CUSTOMER_ID unknown
+  ORDER_DATE datetime
+  ORDER_ID number
+  ORDER_TOTAL number
+  SALES_REP_ID number [null, nullable: 1]
+  SHIP_TO_ADDRESS_ID unknown
+  STATUS text [observed: 'CANCELLED, NEW, PAID, SHIPPED']
+
+  indexes {
+    ORDER_ID [unique]
+  }
+}
+
+Table SALES.CUSTOMERS [read: 11, keys: 'CUSTOMER_ID: name match <S>_ID', ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
+  ACCOUNT_MANAGER_ID unknown
+  CREATED_AT datetime
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  EMAIL text
+  STATUS text [observed: 'ACTIVE']
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
+}
+
+Table SALES.CUSTOMER_ADDRESSES [read: 1, keys: 'ADDRESS_ID: name match <S>_ID'] {
+  ADDRESS_ID unknown
+  CITY unknown
+  COUNTRY_CODE unknown
+
+  indexes {
+    ADDRESS_ID [unique]
+  }
+}
+
+Table SALES.ORDER_LINES [read: 9, write: 1] {
+  DISCOUNT_PCT number [null, nullable: 3]
+  LINE_NO unknown
+  ORDER_ID unknown
+  PRODUCT_ID unknown
+  QUANTITY number
+  UNIT_PRICE number
+}
+
+Table SALES.ORDER_PROMOTIONS [read: 2] {
+  ORDER_ID unknown
+  PROMO_ID unknown
+}
+
+Table SALES.PAYMENTS [read: 4, keys: 'PAYMENT_ID: name match <S>_ID'] {
+  AMOUNT number
+  CURRENCY_CODE unknown
+  ExternalRef unknown [null, nullable: 1]
+  METHOD text [observed: 'CARD']
+  ORDER_ID unknown
+  PAID_AT unknown
+  PAYMENT_ID unknown
+
+  indexes {
+    PAYMENT_ID [unique]
+  }
+}
+
+Ref "join 1": SALES.ORDERS.BILL_TO_ADDRESS_ID >? SALES.CUSTOMER_ADDRESSES.ADDRESS_ID
+Ref "join 1": SALES.ORDERS.(CURRENCY_CODE, ORDER_ID) ?<>? SALES.PAYMENTS.(CURRENCY_CODE, ORDER_ID)
+Ref "join 4": SALES.ORDERS.CUSTOMER_ID >? SALES.CUSTOMERS.CUSTOMER_ID
+Ref "join 1": SALES.ORDERS.SHIP_TO_ADDRESS_ID >? SALES.CUSTOMER_ADDRESSES.ADDRESS_ID
+Ref "join 3": SALES.ORDER_LINES.ORDER_ID >? SALES.ORDERS.ORDER_ID
+Ref "join 1": SALES.ORDER_PROMOTIONS.ORDER_ID >? SALES.ORDERS.ORDER_ID
+Ref "join 2": SALES.PAYMENTS.ORDER_ID >? SALES.ORDERS.ORDER_ID
+
+// 034_ship_and_bill_addresses
+// -- ORDERS references CUSTOMER_ADDRESSES twice, once per role.
+// SELECT o.order_id,
+//        ship.city AS ship_city,
+//        ship_country.country_name AS ship_country,
+//        bill.city AS bill_city,
+//        bill_country.country_name AS bill_country
+//   FROM sales.orders o
+//   JOIN sales.customer_addresses ship ON ship.address_id = o.ship_to_address_id
+//   JOIN ref.countries ship_country ON ship_country.country_code = ship.country_code
+//   JOIN sales.customer_addresses bill ON bill.address_id = o.bill_to_address_id
+//   JOIN ref.countries bill_country ON bill_country.country_code = bill.country_code
+//  WHERE ship.country_code <> bill.country_code
+
+// 042_join_using
+// SELECT order_id, o.order_date, ol.line_no, ol.quantity
+//   FROM sales.orders o
+//   JOIN sales.order_lines ol USING (order_id)
+//  WHERE o.status = 'NEW'
+
+// 005_customers_without_orders
+// SELECT c.customer_id, c.customer_name, c.created_at
+//   FROM sales.customers c, sales.orders o
+//  WHERE c.customer_id = o.customer_id (+)
+//    AND o.order_id IS NULL
+
+// 013_orders_with_payment
+// SELECT o.order_id, o.order_total
+//   FROM sales.orders o
+//  WHERE EXISTS (SELECT 1
+//                  FROM sales.payments p
+//                 WHERE p.order_id = o.order_id
+//                   AND p.method = 'CARD')
+
+// 027_orders_with_promotions
+// SELECT o.order_id, o.order_date, pr.promo_code, pr.percent_off
+//   FROM sales.orders o
+//   JOIN sales.order_promotions op ON op.order_id = o.order_id
+//   JOIN sales.promotions pr ON pr.promo_id = op.promo_id
+//  WHERE pr.promo_code LIKE 'SPRING%'
+
+// 044_order_payment_balance
+// SELECT o.order_id,
+//        o.order_total,
+//        NVL(SUM(p.amount), 0) AS paid,
+//        o.order_total - NVL(SUM(p.amount), 0) AS balance
+//   FROM sales.orders o, sales.payments p
+//  WHERE p.order_id (+) = o.order_id
+//    AND p.currency_code (+) = o.currency_code
+//  GROUP BY o.order_id, o.order_total
+// HAVING o.order_total - NVL(SUM(p.amount), 0) > 0

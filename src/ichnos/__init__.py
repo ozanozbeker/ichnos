@@ -1,7 +1,7 @@
 """Infer an Oracle schema and its lineage from SQL queries alone."""
 
 from ichnos._corpus import read
-from ichnos._dbml import dbml
+from ichnos._dbml import Detail, dbml
 from ichnos._graph import (
     Ambiguity,
     AmbiguityKind,
@@ -11,6 +11,7 @@ from ichnos._graph import (
     Dependency,
     Graph,
     IchnosError,
+    Indirect,
     Key,
     NameMatch,
     OutputColumn,
@@ -18,6 +19,8 @@ from ichnos._graph import (
     Relationship,
     Report,
     Rollup,
+    Slice,
+    SliceKind,
     Table,
     UnparsedQuery,
     infer,
@@ -34,8 +37,10 @@ __all__ = [
     "ContradictionReason",
     "Declaration",
     "Dependency",
+    "Detail",
     "Graph",
     "IchnosError",
+    "Indirect",
     "Key",
     "KeyShape",
     "NameMatch",
@@ -45,6 +50,8 @@ __all__ = [
     "Relationship",
     "Report",
     "Rollup",
+    "Slice",
+    "SliceKind",
     "Subtype",
     "Table",
     "TableKind",

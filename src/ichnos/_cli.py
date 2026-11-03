@@ -4,6 +4,7 @@ The commands call the public API alone, so the CLI prints nothing that a Python 
 This module is the only one that imports cyclopts.
 """
 
+import difflib
 import functools
 import io
 import sys
@@ -13,13 +14,13 @@ from typing import TYPE_CHECKING, Annotated
 import cyclopts
 
 from ichnos._corpus import read
+from ichnos._dbml import BUDGET, Detail, table_name
 from ichnos._dbml import dbml as write_dbml
-from ichnos._graph import Graph, IchnosError
-from ichnos._llm import BUDGET
+from ichnos._graph import Graph, IchnosError, Table
 from ichnos._llm import summary as write_summary
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
 app = cyclopts.App(
     name="ichnos", help="Infer an Oracle schema and its lineage from SQL queries alone."
@@ -64,6 +65,31 @@ def _note_unparsed(graph: Graph, corpus: Path) -> None:
         sys.stderr.write(
             f"ichnos: {len(graph.unparsed)} of {total} queries unparsed;"
             f" run ichnos unparsed {corpus} to list them\n"
+        )
+
+
+def _tables(graph: Graph, names: Iterable[str]) -> list[Table]:
+    """Look each table up, and turn a missing one into a user error that names up to three close matches."""
+    found: list[Table] = []
+    for name in names:
+        try:
+            found.append(graph.table(name))
+        except KeyError:
+            known = [table_name(t) for t in graph.tables]
+            close = difflib.get_close_matches(name.upper(), known, n=3)
+            hint = f"; did you mean {' or '.join(close)}?" if close else ""
+            message = f"no table {name}{hint}"
+            raise IchnosError(message) from None
+    return found
+
+
+def _write_slice(text: str, budget: int, output: Path | None) -> None:
+    _write(text, output)
+    if len(text) > budget:
+        # stderr reaches a user who pastes the slice without reading its header (ADR 0014).
+        sys.stderr.write(
+            f"ichnos: the core of this slice is {len(text):,} characters,"
+            f" over the {budget:,}-character budget\n"
         )
 
 
@@ -137,6 +163,93 @@ def summary(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
     """
     graph = _graph(corpus, suffix, encoding)
     _write(write_summary(graph, owner, keyword, budget), output)
+    _note_unparsed(graph, corpus)
+
+
+@app.command
+@_command
+def neighborhood(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
+    corpus: Path,
+    tables: Annotated[tuple[str, ...], cyclopts.Parameter(consume_multiple=True)],
+    /,
+    *,
+    depth: Annotated[
+        int, cyclopts.Parameter(validator=cyclopts.validators.Number(gte=0))
+    ] = 1,
+    budget: Budget = BUDGET,
+    detail: Detail = "compact",
+    examples: bool = False,
+    output: Output = None,
+    suffix: Suffix = (".sql",),
+    encoding: str = "cp1252",
+) -> None:
+    """Write the tables within some relationships of one or more centers, as a DBML slice.
+
+    Parameters
+    ----------
+    corpus
+        A folder of query files, or one file.
+    tables
+        The center tables, such as `SALES.ORDERS`.
+    depth
+        The most relationships between a center and a table in the slice.
+    budget
+        The most characters the slice holds, which it cuts to fit down to its core.
+    detail
+        `compact` drops each column's position and type counts, and `full` keeps them.
+    examples
+        End the slice with example queries as comments.
+    output
+        The file to write, instead of stdout.
+    suffix
+        The suffix of the files to read in a folder, which can repeat.
+    encoding
+        The codec for a file with no BOM that fails UTF-8.
+    """
+    graph = _graph(corpus, suffix, encoding)
+    found = graph.neighborhood(_tables(graph, tables), depth)
+    _write_slice(write_dbml(found, budget, detail, examples), budget, output)
+    _note_unparsed(graph, corpus)
+
+
+@app.command(name="join-path")
+@_command
+def join_path(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
+    corpus: Path,
+    tables: Annotated[tuple[str, ...], cyclopts.Parameter(consume_multiple=True)],
+    /,
+    *,
+    budget: Budget = BUDGET,
+    detail: Detail = "compact",
+    examples: bool = False,
+    output: Output = None,
+    suffix: Suffix = (".sql",),
+    encoding: str = "cp1252",
+) -> None:
+    """Write the shortest join paths between two or more tables, as a DBML slice.
+
+    Parameters
+    ----------
+    corpus
+        A folder of query files, or one file.
+    tables
+        Two or more tables, such as `SALES.ORDERS INV.PRODUCTS`.
+    budget
+        The most characters the slice holds, which it cuts to fit down to its core.
+    detail
+        `compact` drops each column's position and type counts, and `full` keeps them.
+    examples
+        End the slice with example queries as comments.
+    output
+        The file to write, instead of stdout.
+    suffix
+        The suffix of the files to read in a folder, which can repeat.
+    encoding
+        The codec for a file with no BOM that fails UTF-8.
+    """
+    graph = _graph(corpus, suffix, encoding)
+    found = graph.join_path(_tables(graph, tables))
+    _write_slice(write_dbml(found, budget, detail, examples), budget, output)
     _note_unparsed(graph, corpus)
 
 

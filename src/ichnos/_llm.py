@@ -6,14 +6,11 @@ The summary is plain text, not DBML, because DBML raises on a table with no colu
 
 from typing import TYPE_CHECKING
 
-from ichnos._dbml import report_name, table_name
+from ichnos._dbml import BUDGET, report_name, table_name
 from ichnos._graph import Graph, Report, Table, count
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-BUDGET = 8000
-"""The default budget in characters: the only prompt size that Microsoft documents for Copilot Chat."""
 
 
 def summary(
