@@ -58,7 +58,7 @@ The first branch names the output columns, so a position it leaves unknown is un
 ichnos keeps every self-dependency.
 024 derives `QTY_ON_HAND` from itself, 051 derives `SEGMENT` from itself, and the `WHERE` of an `UPDATE` and the `ON` of a `MERGE` give indirect dependencies on their own target.
 ichnos flags no cycle, because a cycle is a fact of the corpus, not an ambiguity.
-DBML raises on `t.a -> t.a` ([issue 36](https://github.com/ozanozbeker/ichnos/issues/36)), and [DBML output with evidence](https://github.com/ozanozbeker/ichnos/issues/12) decides how to write that dependency.
+DBML raises on `t.a -> t.a` ([issue 36](https://github.com/ozanozbeker/ichnos/issues/36)), so the output writes it as a column property ([ADR 0011](0011-dbml-evidence-as-custom-properties-in-one-file.md)).
 
 ## Evidence
 
