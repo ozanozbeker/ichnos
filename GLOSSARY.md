@@ -38,7 +38,7 @@ _Avoid_: schema graph, model
 **True schema**: The database's actual schema. ichnos never sees it.
 _Avoid_: hidden schema, real schema, ground truth
 
-**Answer key**: A true schema written down so an inferred schema can be scored against it.
+**Answer key**: A true schema, or the true lineage of a corpus, written down so ichnos's output can be scored against it.
 
 **Owner**: Oracle's namespace for tables, such as `HR` or `SALES`.
 Oracle and DBML both also call it a schema, and this glossary does not.

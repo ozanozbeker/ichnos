@@ -1,7 +1,8 @@
 -- Answer key for the synthetic Oracle corpus.
 -- ichnos must never read this file as input. Tests compare inferred output against it.
 -- The queries in ../queries run as APP_RO, a user that owns no objects, so an unprefixed
--- name resolves through the public synonyms at the end of this file.
+-- name resolves through the public synonyms at the end of this file. The pipeline files 045 to
+-- 053 run as MART and qualify every name.
 
 ------------------------------------------------------------------------------
 -- REF: lookup tables with natural character keys
@@ -203,6 +204,48 @@ CREATE TABLE inv.shipment_lines (
 );
 
 ------------------------------------------------------------------------------
+-- MART: a reporting pipeline over the tables above. 045, 047, 049 and 050 create
+-- these tables with CREATE TABLE ... AS SELECT. Oracle copies NOT NULL only for a
+-- column that the select list names bare, and a DBA added the keys afterwards.
+------------------------------------------------------------------------------
+
+CREATE TABLE mart.order_line_facts (
+  order_id      NUMBER(12) NOT NULL,
+  line_no       NUMBER(4)  NOT NULL,
+  customer_id   NUMBER(10) NOT NULL,
+  sales_date    DATE,
+  currency_code CHAR(3)    NOT NULL,
+  product_id    NUMBER(10) NOT NULL,
+  category_id   NUMBER(6)  NOT NULL,
+  units         NUMBER(8)  NOT NULL,
+  net_amount    NUMBER,
+  CONSTRAINT order_line_facts_pk PRIMARY KEY (order_id, line_no)
+);
+
+CREATE TABLE mart.customer_daily_sales (
+  customer_id   NUMBER(10) NOT NULL,
+  sales_date    DATE       NOT NULL,
+  currency_code CHAR(3)    NOT NULL,
+  line_count    NUMBER,
+  units         NUMBER,
+  net_amount    NUMBER,
+  CONSTRAINT customer_daily_sales_pk PRIMARY KEY (customer_id, sales_date, currency_code)
+);
+
+CREATE TABLE mart.customer_segments (
+  customer_id    NUMBER(10)    NOT NULL,
+  customer_name  VARCHAR2(120) NOT NULL,
+  net_amount_12m NUMBER,
+  segment        VARCHAR2(10),
+  CONSTRAINT customer_segments_pk PRIMARY KEY (customer_id)
+);
+
+CREATE TABLE mart.lapsed_customers (
+  customer_id NUMBER(10) NOT NULL,
+  CONSTRAINT lapsed_customers_pk PRIMARY KEY (customer_id)
+);
+
+------------------------------------------------------------------------------
 -- Foreign keys. Every relationship in the schema is declared here.
 ------------------------------------------------------------------------------
 
@@ -267,6 +310,25 @@ ALTER TABLE inv.shipment_lines ADD CONSTRAINT shipment_lines_shipment_fk
 ALTER TABLE inv.shipment_lines ADD CONSTRAINT shipment_lines_order_line_fk
   FOREIGN KEY (order_id, line_no) REFERENCES sales.order_lines (order_id, line_no);
 
+ALTER TABLE mart.order_line_facts ADD CONSTRAINT order_line_facts_order_line_fk
+  FOREIGN KEY (order_id, line_no) REFERENCES sales.order_lines (order_id, line_no);
+ALTER TABLE mart.order_line_facts ADD CONSTRAINT order_line_facts_customer_fk
+  FOREIGN KEY (customer_id) REFERENCES sales.customers (customer_id);
+ALTER TABLE mart.order_line_facts ADD CONSTRAINT order_line_facts_currency_fk
+  FOREIGN KEY (currency_code) REFERENCES ref.currencies (currency_code);
+ALTER TABLE mart.order_line_facts ADD CONSTRAINT order_line_facts_product_fk
+  FOREIGN KEY (product_id) REFERENCES inv.products (product_id);
+ALTER TABLE mart.order_line_facts ADD CONSTRAINT order_line_facts_category_fk
+  FOREIGN KEY (category_id) REFERENCES inv.product_categories (category_id);
+ALTER TABLE mart.customer_daily_sales ADD CONSTRAINT customer_daily_sales_customer_fk
+  FOREIGN KEY (customer_id) REFERENCES sales.customers (customer_id);
+ALTER TABLE mart.customer_daily_sales ADD CONSTRAINT customer_daily_sales_currency_fk
+  FOREIGN KEY (currency_code) REFERENCES ref.currencies (currency_code);
+ALTER TABLE mart.customer_segments ADD CONSTRAINT customer_segments_customer_fk
+  FOREIGN KEY (customer_id) REFERENCES sales.customers (customer_id);
+ALTER TABLE mart.lapsed_customers ADD CONSTRAINT lapsed_customers_customer_fk
+  FOREIGN KEY (customer_id) REFERENCES sales.customers (customer_id);
+
 ------------------------------------------------------------------------------
 -- Views
 ------------------------------------------------------------------------------
@@ -305,6 +367,22 @@ SELECT TRUNC(o.order_date) AS sales_date,
   FROM sales.orders o
  WHERE o.status <> 'CANCELLED'
  GROUP BY TRUNC(o.order_date), o.currency_code;
+
+-- 052 creates this view with SELECT *. Oracle stores the expanded column list.
+CREATE VIEW mart.v_key_customers AS
+SELECT customer_id, customer_name, net_amount_12m, segment
+  FROM mart.customer_segments
+ WHERE segment IN ('KEY', 'STRATEGIC');
+
+CREATE MATERIALIZED VIEW mart.mv_category_monthly AS
+SELECT TRUNC(f.sales_date, 'MM') AS sales_month,
+       pc.category_name,
+       f.currency_code,
+       SUM(f.net_amount) AS net_amount,
+       COUNT(DISTINCT f.order_id) AS order_count
+  FROM mart.order_line_facts f
+  JOIN inv.product_categories pc ON pc.category_id = f.category_id
+ GROUP BY TRUNC(f.sales_date, 'MM'), pc.category_name, f.currency_code;
 
 ------------------------------------------------------------------------------
 -- Synonyms. APP_RO reads these names without a schema prefix.
