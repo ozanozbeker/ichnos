@@ -127,3 +127,25 @@ def test_unparsed_lists_each_query_with_the_first_line_of_its_error(
         err
         == f"ichnos: 2 of 3 queries unparsed; run ichnos unparsed {tmp_path} to list them\n"
     )
+
+
+def test_summary_mirrors_the_api(capsys: pytest.CaptureFixture[str]):
+    tokens = [
+        "summary",
+        str(answer_key.QUERIES),
+        "--owner",
+        "mart",
+        "--keyword",
+        "sales",
+        "--budget",
+        "300",
+    ]
+    code, out, err = _run(capsys, *tokens)
+    assert (code, err) == (0, "")
+    assert out == ichnos.summary(ichnos.read(answer_key.QUERIES), "mart", "sales", 300)
+
+
+def test_a_budget_below_one_is_a_usage_error(capsys: pytest.CaptureFixture[str]):
+    code, _, err = _run(capsys, "summary", str(answer_key.QUERIES), "--budget", "0")
+    assert code == 2
+    assert err

@@ -15,6 +15,8 @@ import cyclopts
 from ichnos._corpus import read
 from ichnos._dbml import dbml as write_dbml
 from ichnos._graph import Graph, IchnosError
+from ichnos._llm import BUDGET
+from ichnos._llm import summary as write_summary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -24,6 +26,9 @@ app = cyclopts.App(
 )
 
 type Output = Annotated[Path | None, cyclopts.Parameter(name=["--output", "-o"])]
+type Budget = Annotated[
+    int, cyclopts.Parameter(validator=cyclopts.validators.Number(gt=0))
+]
 type Suffix = Annotated[
     tuple[str, ...],
     cyclopts.Parameter(name="--suffix", negative="", consume_multiple=False),
@@ -95,6 +100,43 @@ def dbml(
     """
     graph = _graph(corpus, suffix, encoding)
     _write(write_dbml(graph), output)
+    _note_unparsed(graph, corpus)
+
+
+@app.command
+@_command
+def summary(  # noqa: PLR0913 # one parameter per API parameter (ADR 0014)
+    corpus: Path,
+    /,
+    *,
+    owner: str | None = None,
+    keyword: str | None = None,
+    budget: Budget = BUDGET,
+    output: Output = None,
+    suffix: Suffix = (".sql",),
+    encoding: str = "cp1252",
+) -> None:
+    """Write one line per table and report, so you can choose what to slice.
+
+    Parameters
+    ----------
+    corpus
+        A folder of query files, or one file.
+    owner
+        Keep only the tables of this owner, and the reports that read one.
+    keyword
+        Keep only the tables and reports whose names, column names or observed values contain it, ignoring case.
+    budget
+        The most characters the summary holds.
+    output
+        The file to write, instead of stdout.
+    suffix
+        The suffix of the files to read in a folder, which can repeat.
+    encoding
+        The codec for a file with no BOM that fails UTF-8.
+    """
+    graph = _graph(corpus, suffix, encoding)
+    _write(write_summary(graph, owner, keyword, budget), output)
     _note_unparsed(graph, corpus)
 
 

@@ -162,11 +162,11 @@ def _endpoint_of(end: Table | Column | Report | OutputColumn) -> str:
     """Write a dependency end as DBML names it: a table, a column, or a report in the schema `report`."""
     match end:
         case Table():
-            return _table_name(end)
+            return table_name(end)
         case Column():
-            return f"{_table_name(end.table)}.{_name(end.name)}"
+            return f"{table_name(end.table)}.{_name(end.name)}"
         case Report():
-            return f"{_REPORTS}.{_name(end.name)}"
+            return report_name(end)
         case OutputColumn():
             return f"{_REPORTS}.{_name(end.report.name)}.{_name(end.name)}"
 
@@ -179,7 +179,7 @@ def _report(report: Report) -> str:
         for c in report.output_columns
     ] or ['  "*" unknown']
     ambiguity = "; ".join(_ambiguity(a) for a in report.ambiguities)
-    head = f"Table {_REPORTS}.{_name(report.name)}{_settings([('kind', 'report'), ('ambiguity', ambiguity)])}"
+    head = f"Table {report_name(report)}{_settings([('kind', 'report'), ('ambiguity', ambiguity)])}"
     return f"{head} {{\n" + "\n".join(lines) + "\n}"
 
 
@@ -196,7 +196,7 @@ def _ref(relationship: Relationship) -> str:
     name = f"join {count(relationship.join)}"
     if relationship.shared is not None:
         key = relationship.shared
-        name += f", shared reference to {_table_name(key.columns[0].table)}.{_key_label(key)}"
+        name += f", shared reference to {table_name(key.columns[0].table)}.{_key_label(key)}"
     return (
         f"Ref {_name_quoted(name)}: {_endpoint(first)} {operator} {_endpoint(second)}"
     )
@@ -208,7 +208,7 @@ def _keyed(columns: tuple[Column, ...]) -> bool:
 
 
 def _endpoint(columns: tuple[Column, ...]) -> str:
-    table = _table_name(columns[0].table)
+    table = table_name(columns[0].table)
     names = [_name(c.name) for c in columns]
     return f"{table}.{names[0]}" if len(names) == 1 else f"{table}.({', '.join(names)})"
 
@@ -255,7 +255,7 @@ def _table(table: Table) -> str:
         # ichnos never writes `pk`, because it never claims a primary key (ADR 0006).
         indexes = (f"    {_key_label(k, quote=True)} [unique]" for k in table.keys)
         lines += ["", "  indexes {", *indexes, "  }"]
-    return f"Table {_table_name(table)}{settings} {{\n" + "\n".join(lines) + "\n}"
+    return f"Table {table_name(table)}{settings} {{\n" + "\n".join(lines) + "\n}"
 
 
 def _key_label(key: Key, *, quote: bool = False) -> str:
@@ -343,7 +343,13 @@ def _value(value: int | str | bool) -> str:  # noqa: FBT001 # a property value, 
     return str(value)
 
 
-def _table_name(table: Table) -> str:
+def report_name(report: Report) -> str:
+    """Write a report's name in the schema `report`, as every DBML text and the summary name it."""
+    return f"{_REPORTS}.{_name(report.name)}"
+
+
+def table_name(table: Table) -> str:
+    """Write a table's name, with its owner, as every DBML text and the summary name it."""
     return (
         _name(table.name)
         if table.owner is None

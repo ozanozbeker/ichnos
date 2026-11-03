@@ -87,3 +87,15 @@ def snapshot_dbml(
 ) -> SnapshotAssertion:
     extension = type("BoundDbmlSnapshot", (DbmlSnapshot,), {"checker": dbml_checker})
     return snapshot.use_extension(extension)
+
+
+class TextSnapshot(SingleFileSnapshotExtension):
+    """Store a golden file as `.txt`, so a reviewer reads it as the CLI prints it."""
+
+    file_extension = "txt"
+    _write_mode = WriteMode.TEXT
+
+
+@pytest.fixture
+def snapshot_text(snapshot: SnapshotAssertion) -> SnapshotAssertion:
+    return snapshot.use_extension(TextSnapshot)
