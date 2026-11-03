@@ -109,46 +109,51 @@ Table INV.WAREHOUSES [read: 3] {
   WAREHOUSE_CODE unknown [select: 2, group_by: 1]
 }
 
-Table MART.CUSTOMER_DAILY_SALES [read: 4, write: 1] {
-  CURRENCY_CODE unknown [select: 1, join: 1, group_by: 1, insert: 1]
-  CUSTOMER_ID unknown [select: 2, join: 1, group_by: 1, insert: 1]
-  LINE_COUNT unknown [aggregate: 1, insert: 1, set: 1]
-  NET_AMOUNT unknown [aggregate: 2, insert: 1, set: 1]
-  SALES_DATE unknown [select: 1, where: 3, join: 1, group_by: 1, order_by: 1, aggregate: 1, insert: 1]
-  UNITS unknown [insert: 1, set: 1]
+Table MART.CUSTOMER_DAILY_SALES [kind: 'base table', complete: true, declared: 1, read: 4, write: 1] {
+  CUSTOMER_ID unknown [declared: 1, select: 2, join: 1, group_by: 1, insert: 1]
+  SALES_DATE unknown [declared: 1, select: 1, where: 3, join: 1, group_by: 1, order_by: 1, aggregate: 1, insert: 1]
+  CURRENCY_CODE unknown [declared: 1, select: 1, join: 1, group_by: 1, insert: 1]
+  LINE_COUNT unknown [declared: 1, aggregate: 1, insert: 1, set: 1]
+  UNITS unknown [declared: 1, insert: 1, set: 1]
+  NET_AMOUNT unknown [declared: 1, aggregate: 2, insert: 1, set: 1]
 }
 
-Table MART.CUSTOMER_SEGMENTS [read: 3, write: 1] {
-  NET_AMOUNT_12M unknown [select: 1, aggregate: 1]
-  SEGMENT unknown [select: 2, where: 2, group_by: 1, set: 1]
+Table MART.CUSTOMER_SEGMENTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  CUSTOMER_ID unknown [declared: 1]
+  CUSTOMER_NAME unknown [declared: 1]
+  NET_AMOUNT_12M unknown [declared: 1, select: 1, aggregate: 1]
+  SEGMENT unknown [declared: 1, select: 2, where: 2, group_by: 1, set: 1]
 }
 
-Table MART.LAPSED_CUSTOMERS [read: 1] {
-  CUSTOMER_ID unknown [select: 1, join: 1]
+Table MART.LAPSED_CUSTOMERS [kind: 'base table', complete: true, declared: 1, read: 1] {
+  CUSTOMER_ID unknown [declared: 1, select: 1, join: 1]
 }
 
-Table MART.MV_CATEGORY_MONTHLY [read: 1] {
-  CATEGORY_NAME unknown [select: 1, order_by: 1]
-  CURRENCY_CODE unknown [where: 1]
-  NET_AMOUNT unknown [select: 1]
-  ORDER_COUNT unknown [select: 1]
-  SALES_MONTH unknown [select: 1, order_by: 1]
+Table MART.MV_CATEGORY_MONTHLY [kind: 'materialized view', complete: true, declared: 1, read: 1] {
+  SALES_MONTH unknown [declared: 1, select: 1, order_by: 1]
+  CATEGORY_NAME unknown [declared: 1, select: 1, order_by: 1]
+  CURRENCY_CODE unknown [declared: 1, where: 1]
+  NET_AMOUNT unknown [declared: 1, select: 1]
+  ORDER_COUNT unknown [declared: 1, select: 1]
 }
 
-Table MART.ORDER_LINE_FACTS [read: 3, write: 1] {
-  CATEGORY_ID unknown [join: 1]
-  CURRENCY_CODE unknown [select: 3, group_by: 3]
-  CUSTOMER_ID unknown [select: 2, group_by: 2]
-  NET_AMOUNT unknown [aggregate: 3]
-  ORDER_ID unknown [aggregate: 1]
-  SALES_DATE unknown [select: 3, where: 1, group_by: 3]
-  UNITS unknown [aggregate: 2]
+Table MART.ORDER_LINE_FACTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  ORDER_ID unknown [declared: 1, aggregate: 1, insert: 1]
+  LINE_NO unknown [declared: 1, insert: 1]
+  CUSTOMER_ID unknown [declared: 1, select: 2, group_by: 2, insert: 1]
+  SALES_DATE unknown [declared: 1, select: 3, where: 1, group_by: 3, insert: 1]
+  CURRENCY_CODE unknown [declared: 1, select: 3, group_by: 3, insert: 1]
+  PRODUCT_ID unknown [declared: 1, insert: 1]
+  CATEGORY_ID unknown [declared: 1, join: 1, insert: 1]
+  UNITS unknown [declared: 1, aggregate: 2, insert: 1]
+  NET_AMOUNT unknown [declared: 1, aggregate: 3, insert: 1]
 }
 
-Table MART.V_KEY_CUSTOMERS [read: 1] {
-  CUSTOMER_ID unknown [select: 1]
-  CUSTOMER_NAME unknown [select: 1]
-  NET_AMOUNT_12M unknown [select: 1, order_by: 1]
+Table MART.V_KEY_CUSTOMERS [kind: 'view', complete: true, declared: 1, read: 1] {
+  CUSTOMER_ID unknown [declared: 1, select: 1]
+  CUSTOMER_NAME unknown [declared: 1, select: 1]
+  NET_AMOUNT_12M unknown [declared: 1, select: 1, order_by: 1]
+  SEGMENT unknown [declared: 1]
 }
 
 Table REF.COUNTRIES [read: 3] {
