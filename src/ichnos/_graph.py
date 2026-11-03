@@ -422,6 +422,71 @@ class Relationship:
 
 
 @dataclass(frozen=True, slots=True)
+class OutputColumn:
+    """One position in a report's select list, under the name Oracle gives it (ADR 0009).
+
+    An output column is never a column, because a report is never a table.
+
+    Attributes
+    ----------
+    report
+        The report that holds the output column.
+    name
+        The alias, the column's name, or the expression's source text with whitespace and comments dropped and uppercased.
+        A repeated name takes a space and `(2)`, `(3)` and so on.
+    position
+        The position in the select list, counted from 1, after each `*` expands.
+    types
+        The type of an expression with a fixed type, with the report's query behind it.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer(
+        {"r": "SELECT o.id, COUNT( * ) FROM sales.orders o GROUP BY o.id"}
+    )
+    graph.reports[0].output_columns
+    ```
+    """
+
+    report: Report = field(repr=False)
+    name: str
+    position: int = field(compare=False)
+    types: Mapping[Type, tuple[Query, ...]] = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class Report:
+    """A query that reads tables and writes none, named after its file (ADR 0009).
+
+    A report is never a table, because no other query can read it, and it takes no owner.
+
+    Attributes
+    ----------
+    name
+        The query's name: its file key, plus `#N` when the file holds several queries.
+    query
+        The query.
+    output_columns
+        The output columns, in position order.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    ichnos.infer({"daily": "SELECT COUNT(*) AS n FROM sales.orders"}).reports
+    ```
+    """
+
+    name: str
+    query: Query = field(compare=False, repr=False)
+    output_columns: tuple[OutputColumn, ...] = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class Graph:
     """The inferred schema of one corpus.
 
@@ -431,6 +496,8 @@ class Graph:
         Every table that a query reads or writes, by owner and then by name.
     relationships
         Every relationship, by the first side's table and columns.
+    reports
+        Every report, by file key and then by position.
     queries
         Every query that ichnos read, by file key and then by position.
     unparsed
@@ -450,6 +517,7 @@ class Graph:
 
     tables: tuple[Table, ...]
     relationships: tuple[Relationship, ...]
+    reports: tuple[Report, ...]
     queries: tuple[Query, ...]
     unparsed: tuple[UnparsedQuery, ...]
     ambiguities: tuple[Ambiguity, ...]
@@ -616,10 +684,26 @@ class _Builder:
         return Graph(
             tables,
             relationships,
+            tuple(self._report(r) for r in self.evidence.reports),
             tuple(self.queries),
             tuple(unparsed),
             tuple(ambiguities),
         )
+
+    def _report(self, evidence: _infer.ReportEvidence) -> Report:
+        query = self.queries[evidence.index]
+        report = Report(query.name, query, ())
+        columns = tuple(
+            OutputColumn(
+                report,
+                name,
+                position,
+                {} if fact.type is None else {fact.type: (query,)},
+            )
+            for position, (name, fact) in enumerate(evidence.outputs, 1)
+        )
+        object.__setattr__(report, "output_columns", columns)
+        return report
 
     def _relationships(
         self, tables: dict[_read.TableKey, Table]

@@ -5,6 +5,7 @@ sqlglot's `optimizer.scope` covers no statement level of an `UPDATE` or `MERGE` 
 """
 
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -147,6 +148,8 @@ class Trace:
     refs: tuple[ColumnRef, ...]
     keys: tuple[KeyEvidence, ...]
     joins: tuple[Join, ...]
+    # A `SELECT` statement's output: each position's name, or a table whose `*` it cannot expand, and its value.
+    outputs: tuple[tuple[Item, Value], ...] = ()
 
 
 def split(text: str) -> list[str]:
@@ -194,7 +197,7 @@ def trace(text: str) -> Trace:
         message = "sqlglot reads the statement as an opaque command"
         raise ReadError(message)
     try:
-        return _trace(tree)
+        return _trace(tree, text)
     except ReadError:
         raise
     # A query is read whole or skipped, never in part (ADR 0004). No known query reaches this clause.
@@ -203,12 +206,14 @@ def trace(text: str) -> Trace:
         raise ReadError(message) from error
 
 
-def _trace(tree: exp.Expr) -> Trace:
+def _trace(tree: exp.Expr, text: str) -> Trace:
     walker = _Walker()
     statement: Statement
     match tree:
         case exp.Query():
-            walker.query(tree, None, {})
+            walker.texts = _select_texts(tree, text)
+            output = walker.query(tree, None, {})
+            walker.outputs = tuple(zip(output.columns, output.values, strict=True))
             statement = "select"
         case exp.Insert():
             statement = walker.insert(tree)
@@ -284,6 +289,9 @@ class _Walker:
             tuple[int, int], tuple[_TableSource, _TableSource, list[tuple[str, str]]]
         ] = {}
         self.naturals: list[Join] = []
+        self.outputs: tuple[tuple[Item, Value], ...] = ()
+        # The source text of each unaliased expression in a report's select list, keyed by the node's id.
+        self.texts: dict[int, str] = {}
 
     def result(self, statement: Statement) -> Trace:
         reads = frozenset(self.reads)
@@ -301,6 +309,7 @@ class _Walker:
                 ),
                 *self.naturals,
             ),
+            self.outputs,
         )
 
     # --- statements ---------------------------------------------------------------------------
@@ -531,7 +540,7 @@ class _Walker:
             self._equalities(join.args.get("on"), scope)
         self._equalities(where and where.this, scope)
         self.expression(node.args.get("order"), scope, "order_by")
-        return _LocalSource(*_expand(node, scope))
+        return _LocalSource(*_expand(node, scope, self.texts))
 
     def _join(
         self, scope: _Scope, join: exp.Join, ctes: dict[str, _LocalSource]
@@ -831,6 +840,62 @@ def _grouped(query: exp.Expr, columns: tuple[Item, ...]) -> tuple[str, ...]:
     )
 
 
+def _select_texts(tree: exp.Expr, text: str) -> dict[int, str]:
+    """Return the name that Oracle gives each unaliased expression of a report's select list (ADR 0009).
+
+    Oracle builds the name from the source text: it drops comments and all whitespace, and uppercases the rest.
+    sqlglot's generated SQL differs from the source text, so the name comes from the tokens.
+    """
+    select = tree
+    while isinstance(select, exp.SetOperation | exp.Subquery):
+        select = select.left if isinstance(select, exp.SetOperation) else select.this
+    tokens = sqlglot.Dialect.get_or_raise("oracle").tokenize(text)
+    segments = _select_list(tokens)
+    # sqlglot and the tokens split every select list Oracle runs alike, so this guards against a surprise only.
+    if not isinstance(select, exp.Select) or len(segments) != len(
+        select.expressions
+    ):  # pragma: no cover
+        return {}
+    return {
+        id(projection): re.sub(
+            r"\s", "", "".join(text[t.start : t.end + 1] for t in segment)
+        ).upper()
+        for projection, segment in zip(select.expressions, segments, strict=True)
+    }
+
+
+def _select_list(tokens: list[Token]) -> list[list[Token]]:
+    """Split the select list of a query's first branch into its positions.
+
+    After a `WITH`, the first branch is the first `SELECT` outside every parenthesis, because each CTE body is inside one.
+    Otherwise it is the first `SELECT`, which a parenthesized first branch puts inside one.
+    """
+    skip = {TokenType.HINT, TokenType.DISTINCT, TokenType.UNIQUE, TokenType.ALL}
+    cte = bool(tokens) and tokens[0].token_type == TokenType.WITH
+    segments: list[list[Token]] = []
+    depth = 0
+    level: int | None = None
+    for token in tokens:
+        if (
+            level is None
+            and token.token_type == TokenType.SELECT
+            and (depth == 0 or not cte)
+        ):
+            level = depth
+            segments.append([])
+            continue
+        if token.token_type == TokenType.FROM and depth == level:
+            break
+        depth += {TokenType.L_PAREN: 1, TokenType.R_PAREN: -1}.get(token.token_type, 0)
+        if level is None:
+            continue
+        if token.token_type == TokenType.COMMA and depth == level:
+            segments.append([])
+        elif segments[-1] or token.token_type not in skip:
+            segments[-1].append(token)
+    return segments
+
+
 def _holds(source: _Source, name: str) -> bool:
     if isinstance(source, _TableSource):
         return True
@@ -881,7 +946,7 @@ def _projection_name(projection: exp.Expr) -> str:
 
 
 def _expand(
-    node: exp.Select, scope: _Scope
+    node: exp.Select, scope: _Scope, texts: dict[int, str]
 ) -> tuple[tuple[Item, ...], tuple[Value, ...]]:
     """Return a select's items and what each value shows, expanding a `*` over local relations.
 
@@ -896,7 +961,9 @@ def _expand(
             case exp.Column(this=exp.Star()):
                 sources = [_lookup(scope, None, _name(projection.args["table"]))]
             case _:
-                items.append(_projection_name(projection))
+                items.append(
+                    _projection_name(projection) or texts.get(id(projection), "")
+                )
                 values.append(
                     assigned(
                         projection.this
