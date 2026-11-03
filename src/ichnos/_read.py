@@ -22,6 +22,12 @@ type Position = Literal[
     "select", "where", "join", "group_by", "order_by", "aggregate", "insert", "set"
 ]
 type Statement = Literal["select", "insert", "update", "merge", "delete", "create"]
+type TableKind = Literal["base table", "view", "materialized view"]
+type Item = str | TableKey
+"""One position of a select list: its name, or a table whose `*` the query alone cannot expand."""
+
+# A `*` over a source whose names nothing can show, such as a recursive CTE before its body is read.
+_ANY: TableKey = (None, "")
 
 # Oracle reads these like columns, and none is a column of a table.
 _PSEUDOCOLUMNS = frozenset(
@@ -67,12 +73,33 @@ class ColumnRef:
 
 
 @dataclass(frozen=True, slots=True)
+class Write:
+    """A table that a DML statement writes.
+
+    `values` holds one item per value of an `INSERT` with no column list, and is `None` otherwise.
+    """
+
+    table: TableKey
+    values: tuple[Item, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class Creation:
+    """The table that a creating query creates, with its kind and its column list (ADR 0008)."""
+
+    table: TableKey
+    kind: TableKind
+    columns: tuple[Item, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Trace:
     """What one query shows about the tables it reads and writes."""
 
     statement: Statement
-    target: TableKey | None
     reads: frozenset[TableKey]
+    writes: tuple[Write, ...]
+    creation: Creation | None
     refs: tuple[ColumnRef, ...]
 
 
@@ -132,23 +159,27 @@ def trace(text: str) -> Trace:
 
 def _trace(tree: exp.Expr) -> Trace:
     walker = _Walker()
+    statement: Statement
     match tree:
         case exp.Query():
             walker.query(tree, None, {})
-            return walker.result("select", None)
+            statement = "select"
         case exp.Insert():
-            return walker.insert(tree)
+            statement = walker.insert(tree)
+        case exp.MultitableInserts():
+            statement = walker.insert_all(tree)
         case exp.Update():
-            return walker.update(tree)
+            statement = walker.update(tree)
         case exp.Merge():
-            return walker.merge(tree)
+            statement = walker.merge(tree)
         case exp.Delete():
-            return walker.delete(tree)
+            statement = walker.delete(tree)
         case exp.Create(kind="TABLE" | "VIEW", expression=exp.Query()):
-            return walker.create(tree)
+            statement = walker.create(tree)
         case _:
             message = f"not a SELECT, DML or a creating query: {tree.key.upper()}"
             raise ReadError(message)
+    return walker.result(statement)
 
 
 def _name(identifier: exp.Expression) -> str:
@@ -170,8 +201,7 @@ class _TableSource:
 
 @dataclass(slots=True)
 class _LocalSource:
-    # None when a `*` that the query alone cannot expand leaves the names unknown.
-    columns: list[str] | None
+    columns: tuple[Item, ...]
 
 
 type _Source = _TableSource | _LocalSource
@@ -192,34 +222,67 @@ class _Walker:
 
     def __init__(self) -> None:
         self.reads: set[TableKey] = set()
+        self.writes: list[Write] = []
+        self.creation: Creation | None = None
         self.refs: list[ColumnRef] = []
 
-    def result(self, statement: Statement, target: TableKey | None) -> Trace:
-        return Trace(statement, target, frozenset(self.reads), tuple(self.refs))
+    def result(self, statement: Statement) -> Trace:
+        reads = frozenset(self.reads)
+        return Trace(
+            statement, reads, tuple(self.writes), self.creation, tuple(self.refs)
+        )
 
     # --- statements ---------------------------------------------------------------------------
 
-    def insert(self, tree: exp.Insert) -> Trace:
-        target = _table_key(
-            tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
-        )
-        self._targets(tree.this, target, "insert")
-        if isinstance(tree.expression, exp.Query):
+    def insert(self, tree: exp.Insert) -> Statement:
+        source = (
             self.query(tree.expression, None, {})
-        return self.result("insert", target)
+            if isinstance(tree.expression, exp.Query)
+            else None
+        )
+        self._insert(tree, _Scope(None), source)
+        return "insert"
 
-    def update(self, tree: exp.Update) -> Trace:
+    def insert_all(self, tree: exp.MultitableInserts) -> Statement:
+        source = self.query(tree.args["source"], None, {})
+        scope = _Scope(None, {"": source})
+        for conditional in tree.expressions:
+            self.expression(conditional.args.get("expression"), scope, "where")
+            self._insert(conditional.this, scope, source)
+        return "insert"
+
+    def _insert(
+        self, insert: exp.Insert, scope: _Scope, source: _LocalSource | None
+    ) -> None:
+        """Record one `INSERT` or one `INTO` of an `INSERT ALL`, whose values come from `source` or a `VALUES` list."""
+        target = _table_key(
+            insert.this.this if isinstance(insert.this, exp.Schema) else insert.this
+        )
+        self._targets(insert.this, target, "insert")
+        values = insert.expression
+        if isinstance(values, exp.Values):
+            [row] = values.expressions
+            self.expression(row, scope, "select")
+            items: tuple[Item, ...] = ("",) * len(row.expressions)
+        else:
+            items = source.columns if source is not None else ()
+        listed = isinstance(insert.this, exp.Schema)
+        self.writes.append(Write(target, None if listed else items))
+
+    def update(self, tree: exp.Update) -> Statement:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
+        self.writes.append(Write(target, None))
         self._assignments(tree.expressions, scope, target)
         self.expression(tree.args.get("where"), scope, "where")
-        return self.result("update", target)
+        return "update"
 
-    def merge(self, tree: exp.Merge) -> Trace:
+    def merge(self, tree: exp.Merge) -> Statement:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
         self._add_source(scope, tree.args["using"], {})
         self.expression(tree.args["on"], scope, "join")
+        values: tuple[Item, ...] | None = None
         for when in tree.args["whens"].expressions:
             self.expression(when.args.get("condition"), scope, "where")
             action = when.args["then"]
@@ -228,21 +291,39 @@ class _Walker:
             elif isinstance(action, exp.Insert):
                 self._targets(action.this, target, "insert")
                 self.expression(action.expression, scope, "select")
+                if not isinstance(action.this, exp.Tuple):
+                    values = ("",) * len(action.expression.expressions)
             self.expression(action.args.get("where"), scope, "where")
-        return self.result("merge", target)
+        self.writes.append(Write(target, values))
+        return "merge"
 
-    def delete(self, tree: exp.Delete) -> Trace:
+    def delete(self, tree: exp.Delete) -> Statement:
         scope = _Scope(None)
         target = self._target(scope, tree.this)
+        self.writes.append(Write(target, None))
         self.expression(tree.args.get("where"), scope, "where")
-        return self.result("delete", target)
+        return "delete"
 
-    def create(self, tree: exp.Create) -> Trace:
-        target = _table_key(
-            tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+    def create(self, tree: exp.Create) -> Statement:
+        listed = isinstance(tree.this, exp.Schema)
+        target = _table_key(tree.this.this if listed else tree.this)
+        source = self.query(tree.expression, None, {})
+        properties = tree.args.get("properties")
+        materialized = properties is not None and any(
+            isinstance(p, exp.MaterializedProperty) for p in properties.expressions
         )
-        self.query(tree.expression, None, {})
-        return self.result("create", target)
+        kind: TableKind = (
+            "base table"
+            if tree.kind == "TABLE"
+            else "materialized view"
+            if materialized
+            else "view"
+        )
+        columns = (
+            tuple(_name(c) for c in tree.this.expressions) if listed else source.columns
+        )
+        self.creation = Creation(target, kind, columns)
+        return "create"
 
     def _target(self, scope: _Scope, node: exp.Table) -> TableKey:
         source = self._add_source(scope, node, {})
@@ -291,9 +372,9 @@ class _Walker:
             name = _name(cte.args["alias"].this)
             declared = [_name(c) for c in cte.args["alias"].columns]
             # A recursive CTE reads itself, so its name is visible inside its own body.
-            ctes[name] = _LocalSource(declared or _output_names(cte.this))
+            ctes[name] = _LocalSource(tuple(declared) or _output_names(cte.this))
             body = self.query(cte.this, parent, ctes)
-            ctes[name] = _LocalSource(declared or body.columns)
+            ctes[name] = _LocalSource(tuple(declared) or body.columns)
         match node:
             case exp.Subquery():
                 return self.query(node.this, parent, ctes)
@@ -303,7 +384,9 @@ class _Walker:
                 # A set operation's `ORDER BY` names its output columns only.
                 self.expression(
                     node.args.get("order"),
-                    _Scope(parent, aliases=set(first.columns or ())),
+                    _Scope(
+                        parent, aliases={c for c in first.columns if isinstance(c, str)}
+                    ),
                     "order_by",
                 )
                 return first
@@ -365,7 +448,7 @@ class _Walker:
                 return local
             if key == (None, "DUAL"):
                 # DUAL is not a table, and its one column is never a column reference.
-                return _LocalSource([])
+                return _LocalSource(())
             self.reads.add(key)
             table = _TableSource(key)
             if alias:
@@ -464,11 +547,9 @@ def _lookup(scope: _Scope, owner: str | None, qualifier: str) -> _Source:
 
 
 def _holds(source: _Source, name: str) -> bool:
-    return (
-        isinstance(source, _TableSource)
-        or source.columns is None
-        or name in source.columns
-    )
+    if isinstance(source, _TableSource):
+        return True
+    return any(not isinstance(c, str) or c == name for c in source.columns)
 
 
 def _inner_position(node: exp.Expr, position: Position) -> Position:
@@ -490,16 +571,16 @@ def _equates_two_tables(node: exp.EQ) -> bool:
     )
 
 
-def _output_names(node: exp.Expr) -> list[str] | None:
-    """Return a query's output column names before it is walked, or None when a `*` hides them."""
+def _output_names(node: exp.Expr) -> tuple[Item, ...]:
+    """Return a query's output names before it is walked, with `_ANY` for each `*`."""
     while isinstance(node, exp.Subquery | exp.SetOperation):
         node = node.this if isinstance(node, exp.Subquery) else node.left
-    names: list[str] = []
-    for projection in node.expressions:
-        if isinstance(projection, exp.Star) or isinstance(projection.this, exp.Star):
-            return None
-        names.append(_projection_name(projection))
-    return names
+    return tuple(
+        _ANY
+        if isinstance(p, exp.Star) or isinstance(p.this, exp.Star)
+        else _projection_name(p)
+        for p in node.expressions
+    )
 
 
 def _projection_name(projection: exp.Expr) -> str:
@@ -514,9 +595,9 @@ def _projection_name(projection: exp.Expr) -> str:
             return ""
 
 
-def _expand(node: exp.Select, scope: _Scope) -> list[str] | None:
-    """Return a select's output names, expanding a `*` over local relations whose names are known."""
-    names: list[str] = []
+def _expand(node: exp.Select, scope: _Scope) -> tuple[Item, ...]:
+    """Return a select's items, expanding a `*` over local relations and keeping one item per table a `*` covers."""
+    items: list[Item] = []
     for projection in node.expressions:
         match projection:
             case exp.Star():
@@ -524,10 +605,10 @@ def _expand(node: exp.Select, scope: _Scope) -> list[str] | None:
             case exp.Column(this=exp.Star()):
                 sources = [_lookup(scope, None, _name(projection.args["table"]))]
             case _:
-                names.append(_projection_name(projection))
+                items.append(_projection_name(projection))
                 continue
         for source in sources:
-            if isinstance(source, _TableSource) or source.columns is None:
-                return None
-            names.extend(source.columns)
-    return names
+            items.extend(
+                (source.key,) if isinstance(source, _TableSource) else source.columns
+            )
+    return tuple(items)

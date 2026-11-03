@@ -13,7 +13,8 @@ from ichnos import _infer, _read
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from ichnos._read import Position
+    from ichnos._infer import ContradictionReason
+    from ichnos._read import Position, TableKind
 
 
 class IchnosError(Exception):
@@ -101,7 +102,7 @@ class UnparsedQuery:
     error: str = field(compare=False)
 
 
-type AmbiguityKind = Literal["column", "owner"]
+type AmbiguityKind = Literal["column", "owner", "declaration"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,14 +113,16 @@ class Ambiguity:
     ----------
     kind
         What the readings differ on. `"column"` is an unqualified column that several tables can hold,
-        and `"owner"` is a table with no owner that shares its name with tables that have one.
+        `"owner"` is a table with no owner that shares its name with tables that have one,
+        and `"declaration"` is a table that creating queries declare in more than one way.
     query
-        The query that holds the ambiguity.
+        The query that holds the ambiguity, or `None` for a `"declaration"` ambiguity, which spans queries.
     subject
         The name that the readings differ on, such as the column `ORDER_ID` or the table `CUSTOMERS`.
     candidates
         Each candidate's name, such as `SALES.ORDERS.ORDER_ID`, with the queries behind it.
         Those queries give the candidate its own evidence count, and the ambiguity's query is never among them.
+        A `"declaration"` candidate names a kind and a column list, such as `view (ID, NAME)`.
 
     Examples
     --------
@@ -134,9 +137,72 @@ class Ambiguity:
     """
 
     kind: AmbiguityKind
-    query: Query
+    query: Query | None
     subject: str
     candidates: Mapping[str, tuple[Query, ...]] = field(compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class Declaration:
+    """One distinct way that creating queries declare a table: its kind and its column list (ADR 0008).
+
+    Attributes
+    ----------
+    kind
+        The kind that the creating queries state.
+    columns
+        The declared column names, in declared order, with each `*` over a declared table expanded.
+    queries
+        The creating queries that state this declaration. Two that match give one declaration.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer({"q": "CREATE VIEW m.v AS SELECT t.a, t.b AS c FROM t"})
+    graph.tables[0].declarations
+    ```
+    """
+
+    kind: TableKind
+    columns: tuple[str, ...]
+    queries: tuple[Query, ...] = field(compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class Contradiction:
+    """A query that shows a declaration no longer describes its table (ADR 0008).
+
+    Attributes
+    ----------
+    query
+        The query that contradicts the declaration.
+    reason
+        `"undeclared column"` when the query references a column that the declaration lacks,
+        `"declaration"` when another creating query declares the table differently,
+        and `"value count"` when an `INSERT` with no column list writes a different number of values.
+    column
+        The undeclared column, or `None` for the other reasons.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer(
+        {
+            "a": "CREATE TABLE m.t AS SELECT s.x FROM s",
+            "b": "SELECT t.y FROM m.t t",
+        }
+    )
+    graph.tables[0].contradictions
+    ```
+    """
+
+    query: Query
+    reason: ContradictionReason
+    column: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +218,10 @@ class Column:
     references
         The queries that reference the column, by position.
         A position's evidence count is the number of distinct texts among its queries.
+    declared
+        The creating queries that declare the column.
+    undeclared
+        Whether the table has a declaration that lacks the column.
     ambiguities
         Each ambiguity with the column among its candidates.
 
@@ -170,6 +240,8 @@ class Column:
     table: Table = field(repr=False)
     name: str
     references: Mapping[Position, tuple[Query, ...]] = field(compare=False, repr=False)
+    declared: tuple[Query, ...] = field(compare=False, repr=False)
+    undeclared: bool = field(compare=False, repr=False)
     ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
 
@@ -184,11 +256,25 @@ class Table:
     name
         The table's name in dictionary form, with any `@link`.
     columns
-        The columns that the queries reference, by name.
+        The columns that the queries reference or declare.
+        A declared table lists its declared columns in declared order, then its undeclared columns by name.
+        Every other table lists its columns by name.
     read
         The queries that read the table.
     write
         The queries that write the table with DML.
+    declared
+        The creating queries that declare the table.
+    declarations
+        Each distinct declaration, in corpus order.
+    kind
+        The table kind that the declarations state,
+        or `None` with no declaration or when the declarations differ in kind.
+    complete
+        Whether the declarations list every column, which holds while no query contradicts them
+        and every `*` in them expanded.
+    contradictions
+        The queries that contradict the declarations. With any, every declaration is contradicted.
     ambiguities
         Each ambiguity with the table among its candidates, and each owner ambiguity of a table with no owner.
 
@@ -207,6 +293,11 @@ class Table:
     columns: tuple[Column, ...] = field(compare=False, repr=False)
     read: tuple[Query, ...] = field(compare=False, repr=False)
     write: tuple[Query, ...] = field(compare=False, repr=False)
+    declared: tuple[Query, ...] = field(compare=False, repr=False)
+    declarations: tuple[Declaration, ...] = field(compare=False, repr=False)
+    kind: TableKind | None = field(compare=False, repr=False)
+    complete: bool = field(compare=False, repr=False)
+    contradictions: tuple[Contradiction, ...] = field(compare=False, repr=False)
     ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
 
@@ -320,11 +411,21 @@ class _Builder:
         return tuple(self.queries[i] for i in sorted(indices))
 
     def graph(self, unparsed: list[UnparsedQuery]) -> Graph:
-        ambiguities = [*self._column_ambiguities(), *self._owner_ambiguities()]
+        ambiguities = [
+            *self._column_ambiguities(),
+            *self._owner_ambiguities(),
+            *self._declaration_ambiguities(),
+        ]
+        # An ambiguity that spans queries sorts after every query's own.
         order = {query: index for index, query in enumerate(self.queries)}
+
+        def position(ambiguity: Ambiguity) -> tuple[int, str]:
+            index = len(order) if ambiguity.query is None else order[ambiguity.query]
+            return (index, ambiguity.subject)
+
         for found in self.ambiguities.values():
-            found.sort(key=lambda a: (order[a.query], a.subject))
-        ambiguities.sort(key=lambda a: (order[a.query], a.subject))
+            found.sort(key=position)
+        ambiguities.sort(key=position)
         keys = sorted(self.evidence.tables, key=lambda k: (k[0] or "", k[1]))
         tables = tuple(self._table(key) for key in keys)
         return Graph(tables, tuple(self.queries), tuple(unparsed), tuple(ambiguities))
@@ -335,7 +436,11 @@ class _Builder:
             candidates: dict[str, tuple[Query, ...]] = {}
             for key in found.candidates:
                 column = self.evidence.tables[key].columns.get(found.name)
-                indices = set().union(*column.references.values()) if column else set()
+                indices = (
+                    set().union(column.declared, *column.references.values())
+                    if column
+                    else set()
+                )
                 candidates[_name(*key, found.name)] = self.records(
                     indices - {found.index}
                 )
@@ -370,15 +475,50 @@ class _Builder:
                 self.ambiguities[(owner, name)].append(ambiguity)
         return ambiguities
 
+    def _declaration_ambiguities(self) -> list[Ambiguity]:
+        ambiguities: list[Ambiguity] = []
+        for key, evidence in self.evidence.tables.items():
+            if len(evidence.declarations) > 1:
+                candidates = {
+                    f"{d.kind} ({', '.join(d.columns)})": self.records(d.indices)
+                    for d in evidence.declarations
+                }
+                ambiguity = Ambiguity("declaration", None, _name(*key), candidates)
+                ambiguities.append(ambiguity)
+                self.ambiguities[key].append(ambiguity)
+        return ambiguities
+
     def _table(self, key: _read.TableKey) -> Table:
         evidence = self.evidence.tables[key]
+        kinds = {d.kind for d in evidence.declarations}
+        declared = [c for d in evidence.declarations for c in d.columns]
         table = Table(
             key[0],
             key[1],
             (),
             self.records(evidence.read),
             self.records(evidence.write),
+            self.records(set().union(*(d.indices for d in evidence.declarations))),
+            tuple(
+                Declaration(d.kind, d.columns, self.records(d.indices))
+                for d in evidence.declarations
+            ),
+            kinds.pop() if len(kinds) == 1 else None,
+            evidence.complete,
+            tuple(
+                Contradiction(self.queries[index], reason, column)
+                for index, reason, column in evidence.contradictions
+            ),
             tuple(self.ambiguities[key]),
+        )
+        # Declared order first, then each other column by name (ADR 0011).
+        names = sorted(
+            evidence.columns,
+            key=lambda n: (
+                n not in declared,
+                declared.index(n) if n in declared else 0,
+                n,
+            ),
         )
         columns = tuple(
             Column(
@@ -388,9 +528,11 @@ class _Builder:
                     position: self.records(found)
                     for position, found in evidence.columns[name].references.items()
                 },
+                self.records(evidence.columns[name].declared),
+                bool(evidence.declarations) and name not in declared,
                 tuple(self.ambiguities[(key, name)]),
             )
-            for name in sorted(evidence.columns)
+            for name in names
         )
         # The records are frozen, and a column needs its table before the table can hold it.
         object.__setattr__(table, "columns", columns)

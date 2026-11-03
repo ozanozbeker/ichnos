@@ -88,6 +88,7 @@ def test_an_ambiguous_reference_counts_for_no_candidate():
         }
     )
     [ambiguity] = graph.ambiguities
+    assert ambiguity.query is not None
     assert (ambiguity.kind, ambiguity.query.name, ambiguity.subject) == (
         "column",
         "b",
@@ -115,6 +116,7 @@ def test_a_table_with_no_owner_names_its_qualified_namesakes():
         {"a": "SELECT o.x FROM sales.orders o", "b": "SELECT o.y FROM orders o"}
     )
     [ambiguity] = graph.ambiguities
+    assert ambiguity.query is not None
     assert (ambiguity.kind, ambiguity.query.name, ambiguity.subject) == (
         "owner",
         "b",

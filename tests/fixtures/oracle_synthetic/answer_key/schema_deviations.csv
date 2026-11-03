@@ -1,9 +1,4 @@
 claim,subject,outcome,reason
-column,MART.CUSTOMER_SEGMENTS.CUSTOMER_ID,miss,"ADR 0008: only 049's declaration names this column, and ichnos does not yet read declarations"
-column,MART.CUSTOMER_SEGMENTS.CUSTOMER_NAME,miss,"ADR 0008: only 049's declaration names this column, and ichnos does not yet read declarations"
-column,MART.ORDER_LINE_FACTS.LINE_NO,miss,"ADR 0008: only 045's declaration names this column, and ichnos does not yet read declarations"
-column,MART.ORDER_LINE_FACTS.PRODUCT_ID,miss,"ADR 0008: only 045's declaration names this column, and ichnos does not yet read declarations"
-column,MART.V_KEY_CUSTOMERS.SEGMENT,miss,"README trap: 052 selects *, so only 049's declaration names this column, and ichnos does not yet read declarations"
 ambiguity,003_orders_comma_join_synonyms: CUSTOMERS,ambiguous,"ADR 0001: an unprefixed name stays its own table, and its qualified namesake is a candidate (README trap: a synonym with the table's own name)"
 ambiguity,003_orders_comma_join_synonyms: ORDERS,ambiguous,"ADR 0001: an unprefixed name stays its own table, and its qualified namesake is a candidate (README trap: a synonym with the table's own name)"
 ambiguity,016_unqualified_columns_in_join: CREDIT_LIMIT,ambiguous,"ADR 0001: 016 names the column unqualified over two tables, so the reference gives evidence to no candidate"

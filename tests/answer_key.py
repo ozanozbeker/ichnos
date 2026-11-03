@@ -141,33 +141,55 @@ def shown(key: AnswerKey) -> tuple[set[Name], set[tuple[Name, str]]]:
 
 
 def score_schema(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
-    """Yield every table, column and ambiguity claim that is not a `match`, and every fact the corpus shows that ichnos misses."""
-    claimed_tables: set[Name] = set()
-    claimed_columns: set[tuple[Name, str]] = set()
+    """Yield every schema claim that is not a `match`, and every fact the corpus shows that ichnos misses."""
+    # Each claimed table, as (table, ""), and each claimed column, as (table, column).
+    claimed: set[tuple[Name, str]] = set()
+    yield from _score_tables(graph, key, claimed)
+    yield from _score_kinds(graph, key)
+    yield from _score_ambiguities(graph, key, claimed)
+    shown_tables, shown_columns = shown(key)
+    for name in sorted(shown_tables - {t for t, c in claimed if not c}):
+        yield Deviation("table", dbml_name(*name), "miss")
+    for name, column in sorted(shown_columns - claimed):
+        yield Deviation("column", dbml_name(*name, column), "miss")
+
+
+def _score_tables(
+    graph: ichnos.Graph, key: AnswerKey, claimed: set[tuple[Name, str]]
+) -> Iterator[Deviation]:
     for table in graph.tables:
         resolved = key.resolve(table.owner, table.name)
         if resolved is None:
             yield Deviation("table", dbml_name(table.owner, table.name), "extra")
             continue
-        claimed_tables.add(resolved)
+        claimed.add((resolved, ""))
         for column in table.columns:
-            claimed_columns.add((resolved, column.name))
+            claimed.add((resolved, column.name))
             if column.name not in key.tables[resolved].columns:
                 subject = dbml_name(table.owner, table.name, column.name)
                 yield Deviation("column", subject, "extra")
+
+
+def _score_kinds(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
+    """Yield each declared table whose kind differs from the answer key's, since recall is checked against every declared table."""
+    for table in graph.tables:
+        resolved = key.resolve(table.owner, table.name)
+        if table.declarations and (
+            resolved is None or table.kind != key.tables[resolved].kind
+        ):
+            yield Deviation("kind", dbml_name(table.owner, table.name), "extra")
+
+
+def _score_ambiguities(
+    graph: ichnos.Graph, key: AnswerKey, claimed: set[tuple[Name, str]]
+) -> Iterator[Deviation]:
     for ambiguity in graph.ambiguities:
         truths = _truths(ambiguity, key)
-        subject = f"{ambiguity.query.name}: {ambiguity.subject}"
-        if truths:
-            yield Deviation("ambiguity", subject, "ambiguous")
-            claimed_columns |= {t for t in truths if t[1]}
-        else:
-            yield Deviation("ambiguity", subject, "extra")
-    shown_tables, shown_columns = shown(key)
-    for name in sorted(shown_tables - claimed_tables):
-        yield Deviation("table", dbml_name(*name), "miss")
-    for name, column in sorted(shown_columns - claimed_columns):
-        yield Deviation("column", dbml_name(*name, column), "miss")
+        query = "" if ambiguity.query is None else f"{ambiguity.query.name}: "
+        subject = f"{query}{ambiguity.subject}"
+        # An ambiguity whose candidates hold the truth covers it, so the truth is no miss.
+        claimed |= set(truths)
+        yield Deviation("ambiguity", subject, "ambiguous" if truths else "extra")
 
 
 def _truths(ambiguity: ichnos.Ambiguity, key: AnswerKey) -> list[tuple[Name, str]]:

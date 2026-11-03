@@ -68,10 +68,19 @@ def _project(graph: Graph) -> str:
 
 
 def _table(table: Table) -> str:
+    kinds = dict.fromkeys(d.kind for d in table.declarations)
+    contradictions = (
+        f"{c.query.name}: {c.reason}{'' if c.column is None else f' {c.column}'}"
+        for c in table.contradictions
+    )
     settings = _settings(
         [
+            ("kind", "|".join(kinds)),
+            ("complete", table.complete),
+            ("declared", count(table.declared)),
             ("read", count(table.read)),
             ("write", count(table.write)),
+            ("contradicted", "; ".join(contradictions)),
             ("ambiguity", "; ".join(_ambiguity(a) for a in table.ambiguities)),
         ]
     )
@@ -80,8 +89,12 @@ def _table(table: Table) -> str:
 
 
 def _column(column: Column) -> str:
-    counts = [(p, count(column.references.get(p, ()))) for p in _POSITIONS]
-    return f"  {_name(column.name)} unknown{_settings(counts)}"
+    settings: list[tuple[str, int | str | bool]] = [
+        ("declared", count(column.declared))
+    ]
+    settings += [(p, count(column.references.get(p, ()))) for p in _POSITIONS]
+    settings += [("undeclared", column.undeclared)]
+    return f"  {_name(column.name)} unknown{_settings(settings)}"
 
 
 def _ambiguity(ambiguity: Ambiguity) -> str:
@@ -90,21 +103,22 @@ def _ambiguity(ambiguity: Ambiguity) -> str:
         f"{name} ({count(q)})" for name, q in ambiguity.candidates.items()
     )
     verb = "may be" if ambiguity.kind == "owner" else "is"
-    return f"{ambiguity.query.name}: {ambiguity.subject} {verb} {candidates}"
+    reading = f"{ambiguity.subject} {verb} {candidates}"
+    return reading if ambiguity.query is None else f"{ambiguity.query.name}: {reading}"
 
 
-def _settings(settings: Sequence[tuple[str, int | str]]) -> str:
-    """Write the custom properties that hold a count above 0 or a string that is not empty."""
-    written = [
-        f"{key}: {_string(value) if isinstance(value, str) else value}"
-        for key, value in settings
-        if value
-    ]
+def _settings(settings: Sequence[tuple[str, int | str | bool]]) -> str:
+    """Write each custom property that holds a count above 0, a string that is not empty, or `true`."""
+    written = [f"{key}: {_value(value)}" for key, value in settings if value]
     return f" [{', '.join(written)}]" if written else ""
 
 
-def _string(value: str) -> str:
-    return f"'{value.translate(_ESCAPES)}'"
+def _value(value: int | str | bool) -> str:  # noqa: FBT001 # a property value, not a flag
+    if isinstance(value, bool):
+        return "true"
+    if isinstance(value, str):
+        return f"'{value.translate(_ESCAPES)}'"
+    return str(value)
 
 
 def _table_name(table: Table) -> str:

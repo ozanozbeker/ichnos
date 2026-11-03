@@ -6,6 +6,8 @@ from ichnos._graph import (
     Ambiguity,
     AmbiguityKind,
     Column,
+    Contradiction,
+    Declaration,
     Graph,
     IchnosError,
     Query,
@@ -13,17 +15,22 @@ from ichnos._graph import (
     UnparsedQuery,
     infer,
 )
-from ichnos._read import Position
+from ichnos._infer import ContradictionReason
+from ichnos._read import Position, TableKind
 
 __all__ = [
     "Ambiguity",
     "AmbiguityKind",
     "Column",
+    "Contradiction",
+    "ContradictionReason",
+    "Declaration",
     "Graph",
     "IchnosError",
     "Position",
     "Query",
     "Table",
+    "TableKind",
     "UnparsedQuery",
     "dbml",
     "infer",
