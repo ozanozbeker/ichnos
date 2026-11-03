@@ -41,7 +41,8 @@ Its note holds these lines, in this order:
 
 1. What was asked: the slice kind, its start, its depth, and "N of M tables".
 2. "Inferred from N queries, with no database connection."
-3. A legend line for each mark that appears in the slice, such as `unknown`, `"text|number"`, `null`, `>?`, `?<>?`, `complete`, `undeclared` and the schema `report`. A slice that holds a table with no `kind` adds the line that says such a table may list only some of its columns.
+3. A legend line for each mark that appears in the slice, such as `unknown`, `"text|number"`, `null`, `>?`, `?<>?`, `complete`, `undeclared` and the schema `report`.
+   A slice that holds a table with no `kind` adds the line that says such a table may list only some of its columns.
 4. Every name the budget cut, and the core's size when the core exceeds the budget.
 5. The outside names that **Neighborhood** and **Join path** list.
 
@@ -97,7 +98,8 @@ A slice names its evidence by counts only, as the DBML file does.
 Copilot cannot open the query files, so a query's name gives it nothing.
 A slice can ask for example queries, which count against the budget:
 
-- A schema slice picks, one at a time, the query that holds evidence for the most `Ref` lines in the slice that no picked query covers, until every `Ref` is covered. A tie goes to the shorter text, then to the name.
+- A schema slice picks, one at a time, the query that holds evidence for the most `Ref` lines in the slice that no picked query covers, until every `Ref` is covered.
+  A tie goes to the shorter text, then to the name.
 - A lineage slice picks the queries that write each hop, nearest hop first.
 
 Each example is the query's text as the corpus holds it, comments included.
