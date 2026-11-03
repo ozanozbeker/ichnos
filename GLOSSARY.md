@@ -66,11 +66,16 @@ It is never a column of the inferred schema.
 A query that joins a table to itself holds two table references to it.
 _Avoid_: table instance
 
+**Key**: An inferred claim that a set of columns identifies at most one row of its table.
+A table can have several keys, or none.
+ichnos never claims a primary key.
+_Avoid_: primary key, unique key, candidate key, identifier
+
 **Relationship**: An inferred claim that columns of one table match columns of another table, or of the same table.
 Its direction is a separate claim.
 _Avoid_: edge, link, ref
 
-**Direction**: The claim that one side of a relationship refers to the key of the other side.
+**Direction**: The claim that one side of a relationship refers to a key of the other side.
 
 **Shared reference**: A relationship whose two sides both refer to the same key column of a third table.
 ichnos flags it and never drops it.
@@ -84,12 +89,17 @@ _Avoid_: sibling join, transitive join
 It is evidence for a relationship, never a relationship itself.
 _Avoid_: join (for the predicate)
 
-**Evidence**: One observation in one query that supports a claim about a table, a column, a relationship or a dependency.
+**Evidence**: One observation in one query that supports a claim about a table, a column, a key, a relationship or a dependency.
 _Avoid_: signal, hint, proof, observation
 
 **Evidence count**: The number of distinct queries that hold evidence for a claim.
 Identical query text counts once.
 _Avoid_: confidence, score, weight
+
+**Name match**: A column name that follows a key pattern for its table, such as `ID`, or `CUSTOMER_ID` in `CUSTOMERS`.
+It supports a key on its own.
+It is not evidence, because no query holds it, so it has no evidence count.
+_Avoid_: naming evidence, naming hint, naming convention
 
 **Observed value**: A literal that a query compares with a column by equality, or assigns to it.
 A column's observed values are never its full set.
