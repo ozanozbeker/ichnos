@@ -76,4 +76,4 @@ def test_a_query_ichnos_cannot_read_records_nothing():
         }
     )
     assert graph.tables == ()
-    assert len(graph.queries) == 4
+    assert len(graph.unparsed) == 4

@@ -34,12 +34,10 @@ class TableEvidence:
     )
 
 
-def combine(traces: Sequence[Trace | None]) -> dict[TableKey, TableEvidence]:
-    """Count each table's and column's evidence across the traces, where `None` marks an unparsed query."""
+def combine(traces: Sequence[Trace]) -> dict[TableKey, TableEvidence]:
+    """Count each table's and column's evidence across the traces of the queries ichnos read."""
     tables: defaultdict[TableKey, TableEvidence] = defaultdict(TableEvidence)
     for index, trace in enumerate(traces):
-        if trace is None:
-            continue
         for key in trace.reads:
             tables[key].read.add(index)
         if trace.target is not None and trace.statement != "create":
