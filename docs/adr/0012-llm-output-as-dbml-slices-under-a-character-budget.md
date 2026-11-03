@@ -92,6 +92,13 @@ Indirect dependencies appear on the first hop only: from the queries that write 
 The 39 `Dep` lines with only indirect subtypes hold 3,031 of the prototype's 7,702 `Dep` characters, and each hop adds the filters and joins of the query that writes it.
 A slice can ask for every indirect dependency.
 
+The walk continues only from a column that it reached through a direct dependency.
+A column reached only through an indirect dependency ends the walk, and so do a table and a report, but the slice still writes the `Dep` line to each.
+So a first-hop filter column brings none of its own lineage, and 054's `CUSTOMER_COUNT` ends at `MART.CUSTOMER_SEGMENTS`, the table its `COUNT(*)` reads.
+With every indirect dependency, the walk also continues from a column reached through an indirect one, and a table still ends it.
+Past the first hop, a dependency keeps only its direct subtypes, so its counts match what the slice shows, and one with none left is dropped.
+The walk visits each end once, so a cycle ends it.
+
 ## Example queries
 
 A slice names its evidence by counts only, as the DBML file does.
@@ -175,6 +182,12 @@ No second format exists for a human, because a human reads DBML and dbdiagram dr
   Rejected because SQL text can hold `*/`.
 - Every indirect dependency on every hop by default.
   Rejected because they make 40% of the `Dep` text.
+- Continuing from every column of a table that the walk reaches.
+  Rejected because 054's `CUSTOMER_COUNT` would pull in the whole `MART` pipeline, and ichnos never cuts the core.
+- Continuing through the rollups of a table that the walk reaches.
+  Rejected because a lineage slice of a column writes no rollup.
+- Keeping a dependency's indirect subtypes past the first hop when it also holds a direct one.
+  Rejected because the counts would show filters that the slice leaves out.
 - Direct dependencies only.
   Rejected because the first hop's filters state which rows the start holds.
 - Path steps weighted by evidence count.
