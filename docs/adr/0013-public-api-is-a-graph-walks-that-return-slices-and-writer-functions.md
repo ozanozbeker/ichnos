@@ -11,10 +11,12 @@ Every module stays private, and `ichnos/__init__.py` re-exports the names below 
 A query's name is the key as given, plus `#N` when the text holds several queries ([ADR 0009](0009-reports-take-their-file-name-and-output-columns-take-oracles-name.md)).
 `infer` raises `IchnosError` when two queries get the same name, such as a one-query key `a#1` beside a two-query key `a`.
 
-`read(folder) -> Graph` builds each key from the file's path relative to the folder, without the extension, with `/` between folders.
-It raises `IchnosError` on two files with one key, such as `x.sql` and `x.txt`, and then calls `infer`.
+`read(path, suffixes=(".sql",), encoding="cp1252") -> Graph` takes a folder or one file.
+In a folder, it builds each key from the file's path relative to the folder, without the extension, with `/` between folders.
+One file's key is its name without the extension.
+It raises `IchnosError` on two files with one key, such as `x.sql` and `x.txt` when `suffixes` holds both, and then calls `infer`.
 Which files `read` reads and how it decodes them is a rule of `read`, so the CLI and a library caller read the same files.
-The [CLI surface](https://github.com/ozanozbeker/ichnos/issues/15) ticket sets that rule.
+[ADR 0014](0014-cli-mirrors-the-api-and-decodes-each-file-on-its-own.md) sets that rule.
 
 The API never receives text without a name.
 A caller with one string writes `infer({"q": sql})`.
@@ -100,7 +102,8 @@ Keyword search exists only as `summary(keyword=...)`.
 
 `IchnosError` is the one public exception.
 `infer` and `read` raise it on a name clash, and `dbml` raises it on an Oracle owner named `report`.
-Lookups raise `KeyError`, and a missing folder raises Python's own `OSError`.
+`read` also raises it on a folder with no matching file, a file that does not decode, and an unknown encoding name.
+Lookups raise `KeyError`, and a missing path raises Python's own `OSError`.
 So the CLI can tell a user error from a bug.
 
 ## Public names

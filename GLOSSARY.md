@@ -179,3 +179,11 @@ _Avoid_: context, excerpt, subgraph, view
 
 **Summary**: The list of one line per table and report that ichnos writes so a user can choose what to slice.
 _Avoid_: table summary, overview, index, catalog
+
+**Budget**: The number of characters that a slice or a summary is cut to fit.
+ichnos never cuts the core to fit it.
+_Avoid_: limit, maximum size
+
+**Core**: The part of a slice that ichnos never cuts: its centers, its paths or its chain.
+ichnos writes a core whole, even when it exceeds the budget.
+_Avoid_: minimum slice
