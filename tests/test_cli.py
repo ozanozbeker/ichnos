@@ -90,13 +90,17 @@ def test_suffix_and_encoding_mirror_the_api(
 def test_python_m_ichnos_writes_the_same_utf_8_bytes_as_the_output_file(tmp_path: Path):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
-    (corpus / "q.sql").write_text('SELECT t."café" FROM t\n', encoding="utf-8")
+    (corpus / "q.sql").write_text(
+        'SELECT t."café" FROM t WHERE t."café" = \'é\'\n', encoding="utf-8"
+    )
     output = tmp_path / "schema.dbml"
     command = [sys.executable, "-m", "ichnos", "dbml", str(corpus)]
     stdout = subprocess.run(command, capture_output=True, check=True).stdout  # noqa: S603 # runs ichnos itself
     subprocess.run([*command, "-o", str(output)], check=True)  # noqa: S603 # runs ichnos itself
     assert stdout == output.read_bytes()
-    assert '"café" unknown'.encode() in stdout
+    assert (
+        "\"café\" text [select: 1, where: 1, text: 1, observed: 'é']".encode() in stdout
+    )
     assert not stdout.startswith(b"\xef\xbb\xbf")
     assert b"\r" not in stdout
 

@@ -5,7 +5,7 @@ sqlglot's `optimizer.scope` covers no statement level of an `UPDATE` or `MERGE` 
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import sqlglot
@@ -23,8 +23,12 @@ type Position = Literal[
 ]
 type Statement = Literal["select", "insert", "update", "merge", "delete", "create"]
 type TableKind = Literal["base table", "view", "materialized view"]
+type Type = Literal["text", "number", "datetime", "interval"]
 type Item = str | TableKey
 """One position of a select list: its name, or a table whose `*` the query alone cannot expand."""
+
+type Value = Fact | TableKey
+"""What one assigned value shows about its column, or a table whose `*` the query alone cannot expand."""
 
 # A `*` over a source whose names nothing can show, such as a recursive CTE before its body is read.
 _ANY: TableKey = (None, "")
@@ -60,6 +64,15 @@ class ReadError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class Fact:
+    """What one column reference, or one value a statement assigns, shows about a column (ADR 0003, ADR 0007)."""
+
+    type: Type | None = None
+    observed: tuple[str, ...] = ()
+    nullable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class ColumnRef:
     """One reference to a column of a table, with the tables it can belong to.
 
@@ -70,17 +83,22 @@ class ColumnRef:
     name: str
     candidates: tuple[tuple[TableKey, ...], ...]
     position: Position
+    fact: Fact = Fact()
+
+
+_NOTHING = Fact()
 
 
 @dataclass(frozen=True, slots=True)
 class Write:
     """A table that a DML statement writes.
 
-    `values` holds one item per value of an `INSERT` with no column list, and is `None` otherwise.
+    `values` holds what each value of an `INSERT` with no column list shows, or the table of a `*` among them.
+    It is `None` for a statement that names every column it writes.
     """
 
     table: TableKey
-    values: tuple[Item, ...] | None
+    values: tuple[Value, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +108,7 @@ class Creation:
     table: TableKey
     kind: TableKind
     columns: tuple[Item, ...]
+    types: tuple[Type | None, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,11 +216,14 @@ def _table_key(table: exp.Table) -> TableKey:
 @dataclass(slots=True)
 class _TableSource:
     key: TableKey
+    # The null-supplying side of an outer join, where `IS NULL` tests for an absent row (ADR 0007).
+    optional: bool = False
 
 
 @dataclass(slots=True)
 class _LocalSource:
     columns: tuple[Item, ...]
+    values: tuple[Value, ...] = ()
 
 
 type _Source = _TableSource | _LocalSource
@@ -225,6 +247,8 @@ class _Walker:
         self.writes: list[Write] = []
         self.creation: Creation | None = None
         self.refs: list[ColumnRef] = []
+        # What a bare column learns from its parent expression, keyed by the column node's id.
+        self.facts: dict[int, Fact] = {}
 
     def result(self, statement: Statement) -> Trace:
         reads = frozenset(self.reads)
@@ -255,19 +279,15 @@ class _Walker:
         self, insert: exp.Insert, scope: _Scope, source: _LocalSource | None
     ) -> None:
         """Record one `INSERT` or one `INTO` of an `INSERT ALL`, whose values come from `source` or a `VALUES` list."""
-        target = _table_key(
-            insert.this.this if isinstance(insert.this, exp.Schema) else insert.this
-        )
-        self._targets(insert.this, target, "insert")
-        values = insert.expression
-        if isinstance(values, exp.Values):
-            [row] = values.expressions
-            self.expression(row, scope, "select")
-            items: tuple[Item, ...] = ("",) * len(row.expressions)
-        else:
-            items = source.columns if source is not None else ()
         listed = isinstance(insert.this, exp.Schema)
-        self.writes.append(Write(target, None if listed else items))
+        target = _table_key(insert.this.this if listed else insert.this)
+        values: tuple[Value, ...] = source.values if source is not None else ()
+        if isinstance(insert.expression, exp.Values):
+            [row] = insert.expression.expressions
+            self.expression(row, scope, "select")
+            values = tuple(assigned(v) for v in row.expressions)
+        self._targets(insert.this, target, values)
+        self.writes.append(Write(target, None if listed else values))
 
     def update(self, tree: exp.Update) -> Statement:
         scope = _Scope(None)
@@ -282,17 +302,18 @@ class _Walker:
         target = self._target(scope, tree.this)
         self._add_source(scope, tree.args["using"], {})
         self.expression(tree.args["on"], scope, "join")
-        values: tuple[Item, ...] | None = None
+        values: tuple[Value, ...] | None = None
         for when in tree.args["whens"].expressions:
             self.expression(when.args.get("condition"), scope, "where")
             action = when.args["then"]
             if isinstance(action, exp.Update):
                 self._assignments(action.expressions, scope, target)
             elif isinstance(action, exp.Insert):
-                self._targets(action.this, target, "insert")
+                row = tuple(assigned(v) for v in action.expression.expressions)
+                self._targets(action.this, target, row)
                 self.expression(action.expression, scope, "select")
                 if not isinstance(action.this, exp.Tuple):
-                    values = ("",) * len(action.expression.expressions)
+                    values = row
             self.expression(action.args.get("where"), scope, "where")
         self.writes.append(Write(target, values))
         return "merge"
@@ -322,7 +343,11 @@ class _Walker:
         columns = (
             tuple(_name(c) for c in tree.this.expressions) if listed else source.columns
         )
-        self.creation = Creation(target, kind, columns)
+        # Oracle gives a declared column the data type of its expression (ADR 0007).
+        types = tuple(v.type if isinstance(v, Fact) else None for v in source.values)
+        if len(types) != len(columns):
+            types = (None,) * len(columns)
+        self.creation = Creation(target, kind, columns, types)
         return "create"
 
     def _target(self, scope: _Scope, node: exp.Table) -> TableKey:
@@ -333,19 +358,15 @@ class _Walker:
         return source.key
 
     def _targets(
-        self, node: exp.Expression, target: TableKey, position: Position
+        self, node: exp.Expression, target: TableKey, values: tuple[Value, ...]
     ) -> None:
+        """Record each column that a column list names, with what the value at its position shows."""
         if isinstance(node, exp.Schema | exp.Tuple):
-            for column in node.expressions:
-                self.refs.append(
-                    ColumnRef(
-                        _name(
-                            column.this if isinstance(column, exp.Column) else column
-                        ),
-                        ((target,),),
-                        position,
-                    )
-                )
+            for index, column in enumerate(node.expressions):
+                name = _name(column.this if isinstance(column, exp.Column) else column)
+                value = values[index] if index < len(values) else Fact()
+                fact = value if isinstance(value, Fact) else Fact()
+                self.refs.append(ColumnRef(name, ((target,),), "insert", fact))
 
     def _assignments(
         self, assignments: list[exp.Expression], scope: _Scope, target: TableKey
@@ -356,8 +377,10 @@ class _Walker:
                 if isinstance(assignment.this, exp.Tuple)
                 else [assignment.this]
             )
+            fact = assigned(assignment.expression) if len(columns) == 1 else Fact()
             for column in columns:
-                self.refs.append(ColumnRef(_name(column.this), ((target,),), "set"))
+                ref = ColumnRef(_name(column.this), ((target,),), "set", fact)
+                self.refs.append(ref)
             self.expression(assignment.expression, scope, "select")
 
     # --- queries ------------------------------------------------------------------------------
@@ -374,11 +397,12 @@ class _Walker:
             # A recursive CTE reads itself, so its name is visible inside its own body.
             ctes[name] = _LocalSource(tuple(declared) or _output_names(cte.this))
             body = self.query(cte.this, parent, ctes)
-            ctes[name] = _LocalSource(tuple(declared) or body.columns)
+            ctes[name] = _LocalSource(tuple(declared) or body.columns, body.values)
         match node:
             case exp.Subquery():
                 return self.query(node.this, parent, ctes)
             case exp.SetOperation():
+                self._same_type_positions(node)
                 first = self.query(node.left, parent, ctes)
                 self.query(node.right, parent, ctes)
                 # A set operation's `ORDER BY` names its output columns only.
@@ -396,6 +420,23 @@ class _Walker:
                 message = f"unsupported query: {node.key.upper()}"
                 raise ReadError(message)
 
+    def _same_type_positions(self, node: exp.SetOperation) -> None:
+        """Give a bare column the fixed type that another branch has at its position (ADR 0007)."""
+        branches: list[exp.Expr] = []
+        pending: list[exp.Expr] = [node]
+        while pending:
+            current = _unparen(pending.pop(0))
+            if isinstance(current, exp.SetOperation):
+                pending[:0] = [current.left, current.right]
+            elif isinstance(current, exp.Select):
+                branches.append(current)
+        for position in zip(*(b.expressions for b in branches), strict=False):
+            shared = next(filter(None, map(_fixed_type, position)), None)
+            for projection in position:
+                bare = _bare(projection)
+                if bare is not None and shared is not None:
+                    self.facts[id(bare)] = Fact(shared)
+
     def _select(
         self, node: exp.Select, parent: _Scope | None, ctes: dict[str, _LocalSource]
     ) -> _LocalSource:
@@ -405,6 +446,16 @@ class _Walker:
             self._add_source(scope, from_.this, ctes)
         for join in node.args.get("joins") or ():
             self._join(scope, join, ctes)
+        where = node.args.get("where")
+        for column in where.find_all(exp.Column) if where else ():
+            # Oracle's `(+)` marks the null-supplying table of an outer join.
+            source = (
+                scope.sources.get(column.table.upper())
+                if column.args.get("join_mark")
+                else None
+            )
+            if isinstance(source, _TableSource):
+                source.optional = True
         for projection in node.expressions:
             self.expression(projection, scope, "select")
             if isinstance(projection, exp.Alias):
@@ -417,13 +468,20 @@ class _Walker:
             self.expression(connect.args.get("start"), scope, "where")
             self.expression(connect.args["connect"], scope, "join")
         self.expression(node.args.get("order"), scope, "order_by")
-        return _LocalSource(_expand(node, scope))
+        return _LocalSource(*_expand(node, scope))
 
     def _join(
         self, scope: _Scope, join: exp.Join, ctes: dict[str, _LocalSource]
     ) -> None:
         before = list(scope.sources.values())
         source = self._add_source(scope, join.this, ctes)
+        side = join.args.get("side")
+        for optional in [
+            *(before if side in {"RIGHT", "FULL"} else ()),
+            *((source,) if side in {"LEFT", "FULL"} else ()),
+        ]:
+            if isinstance(optional, _TableSource):
+                optional.optional = True
         self.expression(join.args.get("on"), scope, "join")
         for identifier in join.args.get("using") or ():
             name = _name(identifier)
@@ -486,6 +544,8 @@ class _Walker:
                     self.expression(ordered, scope, "order_by")
             case _:
                 position = _inner_position(node, position)
+                for column, fact in _child_facts(node):
+                    self.facts[id(column)] = fact
                 for child in node.iter_expressions():
                     self.expression(child, scope, position)
 
@@ -493,27 +553,27 @@ class _Walker:
         if isinstance(node.this, exp.Star):
             return
         name = _name(node.this)
+        fact = self.facts.pop(id(node), Fact())
         if not node.this.quoted and name in _PSEUDOCOLUMNS:
             return
         qualifier = node.args.get("table")
         if qualifier is not None:
             owner = node.args.get("db")
-            self._emit(
-                name,
-                _lookup(scope, _name(owner) if owner else None, _name(qualifier)),
-                position,
-            )
+            source = _lookup(scope, _name(owner) if owner else None, _name(qualifier))
+            self._emit(name, source, position, fact)
         elif node.this.quoted or name not in _FUNCTIONS_READ_AS_COLUMNS:
             if not (position == "order_by" and name in scope.aliases):
-                self._unqualified(name, scope, position)
+                self._unqualified(name, scope, position, fact)
 
-    def _unqualified(self, name: str, scope: _Scope, position: Position) -> None:
-        layers: list[tuple[TableKey, ...]] = []
+    def _unqualified(
+        self, name: str, scope: _Scope, position: Position, fact: Fact
+    ) -> None:
+        layers: list[tuple[_TableSource, ...]] = []
         current: _Scope | None = scope
         while current is not None:
             if name in current.using:
                 for source in current.using[name]:
-                    self._emit(name, source, position)
+                    self._emit(name, source, position, fact)
                 return
             holders = [s for s in current.sources.values() if _holds(s, name)]
             if any(isinstance(s, _LocalSource) for s in holders):
@@ -521,16 +581,21 @@ class _Walker:
                 # One whose names a `*` hides may hold it, so the reference gives no evidence.
                 return
             if holders:
-                layers.append(
-                    tuple(s.key for s in holders if isinstance(s, _TableSource))
-                )
+                layers.append(tuple(s for s in holders if isinstance(s, _TableSource)))
             current = current.parent
         if layers:
-            self.refs.append(ColumnRef(name, tuple(layers), position))
+            if len(layers[0]) == 1 and layers[0][0].optional:
+                fact = replace(fact, nullable=False)
+            keys = tuple(tuple(s.key for s in layer) for layer in layers)
+            self.refs.append(ColumnRef(name, keys, position, fact))
 
-    def _emit(self, name: str, source: _Source, position: Position) -> None:
+    def _emit(
+        self, name: str, source: _Source, position: Position, fact: Fact = _NOTHING
+    ) -> None:
         if isinstance(source, _TableSource):
-            self.refs.append(ColumnRef(name, ((source.key,),), position))
+            if source.optional:
+                fact = replace(fact, nullable=False)
+            self.refs.append(ColumnRef(name, ((source.key,),), position, fact))
 
 
 def _lookup(scope: _Scope, owner: str | None, qualifier: str) -> _Source:
@@ -595,9 +660,15 @@ def _projection_name(projection: exp.Expr) -> str:
             return ""
 
 
-def _expand(node: exp.Select, scope: _Scope) -> tuple[Item, ...]:
-    """Return a select's items, expanding a `*` over local relations and keeping one item per table a `*` covers."""
+def _expand(
+    node: exp.Select, scope: _Scope
+) -> tuple[tuple[Item, ...], tuple[Value, ...]]:
+    """Return a select's items and what each value shows, expanding a `*` over local relations.
+
+    A `*` over a table keeps one item, the table, which a declaration can expand later (ADR 0008).
+    """
     items: list[Item] = []
+    values: list[Value] = []
     for projection in node.expressions:
         match projection:
             case exp.Star():
@@ -606,9 +677,311 @@ def _expand(node: exp.Select, scope: _Scope) -> tuple[Item, ...]:
                 sources = [_lookup(scope, None, _name(projection.args["table"]))]
             case _:
                 items.append(_projection_name(projection))
+                values.append(
+                    assigned(
+                        projection.this
+                        if isinstance(projection, exp.Alias)
+                        else projection
+                    )
+                )
                 continue
         for source in sources:
-            items.extend(
-                (source.key,) if isinstance(source, _TableSource) else source.columns
+            if isinstance(source, _TableSource):
+                items.append(source.key)
+                values.append(source.key)
+            else:
+                items.extend(source.columns)
+                values.extend(source.values or (Fact(),) * len(source.columns))
+    return tuple(items), tuple(values)
+
+
+# --- types, nullable and observed values (ADR 0003, ADR 0007) -------------------------------
+
+_TEXT_RESULT = (
+    exp.Upper,
+    exp.Lower,
+    exp.Trim,
+    exp.Substring,
+    exp.Replace,
+    exp.Pad,
+    exp.Initcap,
+    exp.ToChar,
+    exp.DPipe,
+    exp.GroupConcat,
+)
+_NUMBER_RESULT = (
+    exp.Count,
+    exp.Sum,
+    exp.Avg,
+    exp.Mul,
+    exp.Div,
+    exp.Neg,
+    exp.Mod,
+    exp.Abs,
+    exp.Floor,
+    exp.Ceil,
+    exp.Length,
+    exp.StrPosition,
+    exp.ToNumber,
+    exp.MonthsBetween,
+    exp.Extract,
+)
+_DATETIME_RESULT = (
+    exp.CurrentTimestamp,
+    exp.Systimestamp,
+    exp.CurrentDate,
+    exp.AddMonths,
+    exp.LastDay,
+    exp.StrToDate,
+    exp.DateStrToDate,
+    exp.StrToTime,
+    exp.DateTrunc,
+)
+# Each typed parameter takes one type, so a bare column there shows it (ADR 0007).
+_NUMBER_PARAMETERS = (
+    exp.Mul,
+    exp.Div,
+    exp.Neg,
+    exp.Mod,
+    exp.Sum,
+    exp.Avg,
+    exp.Abs,
+    exp.Floor,
+    exp.Ceil,
+)
+_TEXT_PARAMETERS = (
+    exp.Upper,
+    exp.Lower,
+    exp.Trim,
+    exp.Substring,
+    exp.StrPosition,
+    exp.Length,
+    exp.Replace,
+    exp.Pad,
+)
+_DATETIME_PARAMETERS = (exp.AddMonths, exp.MonthsBetween, exp.LastDay, exp.DateTrunc)
+_SAME_TYPE_FUNCTIONS = (exp.Coalesce, exp.Nvl2, exp.Nullif, exp.Greatest, exp.Least)
+_RESULT_TYPES: tuple[tuple[tuple[type[exp.Expr], ...], Type], ...] = (
+    (_TEXT_RESULT, "text"),
+    (_NUMBER_RESULT, "number"),
+    (_DATETIME_RESULT, "datetime"),
+    ((exp.Interval,), "interval"),
+)
+
+
+def _unparen(node: exp.Expr) -> exp.Expr:
+    while isinstance(node, exp.Paren):
+        node = node.this
+    return node
+
+
+def _bare(node: exp.Expr | None) -> exp.Column | None:
+    """Return the column that a node is, when it is a bare column of a table and not a pseudocolumn."""
+    if node is None:
+        return None
+    node = _unparen(node)
+    if isinstance(node, exp.Alias):
+        node = _unparen(node.this)
+    if not isinstance(node, exp.Column) or isinstance(node.this, exp.Star):
+        return None
+    pseudo = not node.this.quoted and node.name.upper() in _PSEUDOCOLUMNS
+    return None if pseudo else node
+
+
+def _fixed_type(node: exp.Expr | None) -> Type | None:  # noqa: C901, PLR0911, PLR0912 # one case per kind of expression
+    """Return the type of an expression whose type ichnos can name without knowing any column's type."""
+    for classes, result in _RESULT_TYPES:
+        if isinstance(node, classes):
+            return result
+    match node:
+        case exp.Paren() | exp.Alias() | exp.Max() | exp.Min():
+            return _fixed_type(node.this)
+        case exp.Literal():
+            return "text" if node.is_string else "number"
+        case exp.Column():
+            # A sequence's NEXTVAL is the one column-shaped value with a fixed type.
+            return (
+                "number"
+                if node.name.upper() in {"NEXTVAL", "CURRVAL"} and node.table
+                else None
             )
-    return tuple(items)
+        case exp.Add() | exp.Sub():
+            return _arithmetic(node)
+        case exp.Round() | exp.Trunc():
+            unit = node.args.get("decimals")
+            if isinstance(unit, exp.Literal):
+                return "datetime" if unit.is_string else "number"
+            return _fixed_type(node.this)
+        case exp.Cast():
+            return _cast_type(node.args["to"])
+        case _ if isinstance(node, _SAME_TYPE_FUNCTIONS):
+            return next(filter(None, map(_fixed_type, _arguments(node))), None)
+        case exp.Case() | exp.DecodeCase():
+            return next(filter(None, map(_fixed_type, _results(node))), None)
+        case exp.Anonymous() if (
+            node.name.upper() == "TRUNC" and len(node.expressions) == 1
+        ):
+            return _fixed_type(node.expressions[0])
+        case _:
+            return None
+
+
+def _arithmetic(node: exp.Add | exp.Sub) -> Type | None:
+    left, right = _fixed_type(node.this), _fixed_type(node.expression)
+    if left is None or right is None:
+        return None
+    if isinstance(node, exp.Sub) and left == right == "datetime":
+        return "number"
+    return (
+        "datetime" if "datetime" in {left, right} else left if left == right else None
+    )
+
+
+def _cast_type(to: exp.DataType) -> Type | None:
+    if to.is_type(*exp.DataType.TEXT_TYPES):
+        return "text"
+    if to.is_type(*exp.DataType.NUMERIC_TYPES):
+        return "number"
+    if to.is_type(*exp.DataType.TEMPORAL_TYPES):
+        return "datetime"
+    return None
+
+
+def _arguments(node: exp.Expr) -> list[exp.Expr | None]:
+    """Return the arguments of a function whose arguments Oracle converts to one type."""
+    if isinstance(node, exp.Nvl2):
+        return [node.args["true"], node.args.get("false")]
+    if isinstance(node, exp.Nullif):
+        return [node.this, node.expression]
+    return [node.this, *node.expressions]
+
+
+def _results(node: exp.Case | exp.DecodeCase) -> list[exp.Expr | None]:
+    """Return the result branches of a `CASE` or a `DECODE`."""
+    if isinstance(node, exp.DecodeCase):
+        rest = node.expressions[1:]
+        return [*rest[1::2], *rest[len(rest) - len(rest) % 2 :]]
+    return [*(i.args["true"] for i in node.args["ifs"]), node.args.get("default")]
+
+
+def _searches(
+    node: exp.Case | exp.DecodeCase,
+) -> tuple[exp.Expr | None, list[exp.Expr]]:
+    """Return the expression that a simple `CASE` or a `DECODE` compares, and the values it compares it with."""
+    if isinstance(node, exp.DecodeCase):
+        pairs = (len(node.expressions) - 1) // 2
+        return node.expressions[0], node.expressions[1 : 1 + 2 * pairs : 2]
+    return node.this, [i.this for i in node.args["ifs"]]
+
+
+def _observed(node: exp.Expr | None) -> str | None:
+    """Return a text or number literal as its SQL literal text."""
+    if (
+        isinstance(node, exp.Neg)
+        and isinstance(node.this, exp.Literal)
+        and not node.this.is_string
+    ):
+        return f"-{node.this.name}"
+    if not isinstance(node, exp.Literal):
+        return None
+    return "'" + node.name.replace("'", "''") + "'" if node.is_string else node.name
+
+
+def assigned(node: exp.Expr | None) -> Fact:
+    """Return what a column learns from a value assigned to it."""
+    node = None if node is None else _unparen(node)
+    observed = _observed(node)
+    return Fact(
+        _fixed_type(node),
+        () if observed is None else (observed,),
+        isinstance(node, exp.Null),
+    )
+
+
+def _child_facts(node: exp.Expr) -> list[tuple[exp.Column, Fact]]:  # noqa: C901, PLR0912 # one case per position
+    """Return what each bare column below a node learns from the expressions beside it."""
+    facts: list[tuple[exp.Expr | None, Fact]] = []
+    match node:
+        case (
+            exp.EQ()
+            | exp.NEQ()
+            | exp.GT()
+            | exp.GTE()
+            | exp.LT()
+            | exp.LTE()
+            | exp.Like()
+        ):
+            equality = isinstance(node, exp.EQ | exp.NEQ)
+            for column, other in (
+                (node.this, node.expression),
+                (node.expression, node.this),
+            ):
+                bare = _bare(column)
+                if bare is not None and _bare(other) is None:
+                    fact = assigned(other)
+                    facts.append(
+                        (bare, Fact(fact.type, fact.observed if equality else ()))
+                    )
+        case exp.Between():
+            types = [
+                _fixed_type(node.args.get("low")),
+                _fixed_type(node.args.get("high")),
+            ]
+            facts.append((node.this, Fact(next(filter(None, types), None))))
+        case exp.In() if not node.args.get("query"):
+            values = [assigned(_unparen(v)) for v in node.expressions]
+            types = [v.type for v in values if v.type is not None]
+            facts.append(
+                (
+                    node.this,
+                    Fact(
+                        types[0] if types else None,
+                        tuple(o for v in values for o in v.observed),
+                    ),
+                )
+            )
+        case exp.Is() if isinstance(node.expression, exp.Null):
+            facts.append((node.this, Fact(nullable=True)))
+        case exp.Case() | exp.DecodeCase():
+            result = next(filter(None, map(_fixed_type, _results(node))), None)
+            facts.extend((r, Fact(result)) for r in _results(node))
+            searched, searches = _searches(node)
+            values = [assigned(s) for s in searches]
+            types = [v.type for v in values if v.type is not None]
+            observed = tuple(o for v in values for o in v.observed)
+            facts.append((searched, Fact(types[0] if types else None, observed)))
+        case _ if isinstance(node, _SAME_TYPE_FUNCTIONS):
+            arguments = _arguments(node)
+            shared = next(filter(None, map(_fixed_type, arguments)), None)
+            first_nullable = isinstance(node, exp.Coalesce | exp.Nvl2)
+            for index, argument in enumerate(arguments):
+                facts.append(
+                    (argument, Fact(shared, nullable=first_nullable and index == 0))
+                )
+            if isinstance(node, exp.Nvl2):
+                facts.append((node.this, Fact(nullable=True)))
+        case _ if isinstance(node, _NUMBER_PARAMETERS):
+            facts.extend(
+                (a, Fact("number")) for a in (node.this, node.args.get("expression"))
+            )
+        case _ if isinstance(node, _TEXT_PARAMETERS):
+            facts.append((node.this, Fact("text")))
+        case _ if isinstance(node, _DATETIME_PARAMETERS):
+            facts.extend(
+                (a, Fact("datetime")) for a in (node.this, node.args.get("expression"))
+            )
+        case exp.Extract():
+            facts.append((node.expression, Fact("datetime")))
+        case exp.Round() | exp.Trunc():
+            unit = node.args.get("decimals")
+            if isinstance(unit, exp.Literal):
+                facts.append(
+                    (node.this, Fact("datetime" if unit.is_string else "number"))
+                )
+        case _:
+            pass
+    return [
+        (bare, fact)
+        for column, fact in facts
+        if (bare := _bare(column)) is not None and fact != Fact()
+    ]
