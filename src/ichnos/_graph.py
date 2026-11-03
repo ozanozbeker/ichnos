@@ -66,6 +66,41 @@ class Query:
 
 
 @dataclass(frozen=True, slots=True)
+class UnparsedQuery:
+    """A query that ichnos could not read whole, so no evidence comes from it.
+
+    That is a query that sqlglot cannot parse or reads as an opaque command, one that is not a `SELECT`, DML or a creating query, and one that a later step fails on (ADR 0004).
+
+    Attributes
+    ----------
+    name
+        The file key, plus `#N` when the file holds several queries.
+    file
+        The key of the file that holds the query.
+    position
+        The query's position in its file, counted from 1.
+    text
+        The query's text.
+    error
+        Why ichnos could not read the query. Its first line is a one-line summary.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    ichnos.infer({"q": "ALTER TABLE t ADD x NUMBER"}).unparsed
+    ```
+    """
+
+    name: str
+    file: str = field(compare=False)
+    position: int = field(compare=False)
+    text: str = field(compare=False, repr=False)
+    error: str = field(compare=False)
+
+
+@dataclass(frozen=True, slots=True)
 class Column:
     """A column of a table that some query references.
 
@@ -139,7 +174,9 @@ class Graph:
     tables
         Every table that a query reads or writes, by owner and then by name.
     queries
-        Every query, by file key and then by position.
+        Every query that ichnos read, by file key and then by position.
+    unparsed
+        Every query that ichnos could not read whole, by file key and then by position.
 
     Examples
     --------
@@ -153,6 +190,7 @@ class Graph:
 
     tables: tuple[Table, ...]
     queries: tuple[Query, ...]
+    unparsed: tuple[UnparsedQuery, ...]
 
 
 def count(queries: Iterable[Query]) -> int:
@@ -201,18 +239,26 @@ def infer(files: Mapping[str, str]) -> Graph:
                 raise IchnosError(message)
             names[query.name] = query
             queries.append(query)
-    traces: list[_read.Trace | None] = []
+    read: list[Query] = []
+    traces: list[_read.Trace] = []
+    unparsed: list[UnparsedQuery] = []
     for query in queries:
         try:
             traces.append(_read.trace(query.text))
-        except _read.ReadError:
-            traces.append(None)
+        except _read.ReadError as error:
+            unparsed.append(
+                UnparsedQuery(
+                    query.name, query.file, query.position, query.text, str(error)
+                )
+            )
+        else:
+            read.append(query)
     evidence = _infer.combine(traces)
     tables = [
-        _table(key, evidence[key], queries)
+        _table(key, evidence[key], read)
         for key in sorted(evidence, key=lambda k: (k[0] or "", k[1]))
     ]
-    return Graph(tuple(tables), tuple(queries))
+    return Graph(tuple(tables), tuple(read), tuple(unparsed))
 
 
 def _table(

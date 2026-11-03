@@ -111,12 +111,26 @@ def trace(text: str) -> Trace:
     Raises
     ------
     ReadError
-        When sqlglot raises, returns a `Command`, or returns a statement that is not a `SELECT`, DML or a creating query.
+        When sqlglot raises or returns a `Command`, the statement is not a `SELECT`, DML or a creating query, or a later step raises.
     """
     try:
         tree = sqlglot.parse_one(text, read="oracle")
     except SqlglotError as error:
         raise ReadError(str(error)) from error
+    if isinstance(tree, exp.Command):
+        message = "sqlglot reads the statement as an opaque command"
+        raise ReadError(message)
+    try:
+        return _trace(tree)
+    except ReadError:
+        raise
+    # A query is read whole or skipped, never in part (ADR 0004). No known query reaches this clause.
+    except Exception as error:  # pragma: no cover
+        message = f"{type(error).__name__}: {error}"
+        raise ReadError(message) from error
+
+
+def _trace(tree: exp.Expr) -> Trace:
     walker = _Walker()
     match tree:
         case exp.Query():
@@ -232,7 +246,9 @@ class _Walker:
 
     def _target(self, scope: _Scope, node: exp.Table) -> TableKey:
         source = self._add_source(scope, node, {})
-        assert isinstance(source, _TableSource)  # noqa: S101 # sqlglot parses a DML target as a table
+        if not isinstance(source, _TableSource):
+            message = "the statement writes a query, not a table"
+            raise ReadError(message)
         return source.key
 
     def _targets(
@@ -482,14 +498,20 @@ def _output_names(node: exp.Expr) -> list[str] | None:
     for projection in node.expressions:
         if isinstance(projection, exp.Star) or isinstance(projection.this, exp.Star):
             return None
-        names.append(
-            _name(
-                projection.args["alias"]
-                if isinstance(projection, exp.Alias)
-                else projection.this
-            )
-        )
+        names.append(_projection_name(projection))
     return names
+
+
+def _projection_name(projection: exp.Expr) -> str:
+    """Return the name that a local relation's select list gives one position."""
+    match projection:
+        case exp.Alias():
+            return _name(projection.args["alias"])
+        case exp.Column():
+            return _name(projection.this)
+        case _:
+            # Only an alias or a column name can refer to the position from outside.
+            return ""
 
 
 def _expand(node: exp.Select, scope: _Scope) -> list[str] | None:
@@ -501,14 +523,8 @@ def _expand(node: exp.Select, scope: _Scope) -> list[str] | None:
                 sources = list(scope.sources.values())
             case exp.Column(this=exp.Star()):
                 sources = [_lookup(scope, None, _name(projection.args["table"]))]
-            case exp.Alias():
-                names.append(_name(projection.args["alias"]))
-                continue
-            case exp.Column():
-                names.append(_name(projection.this))
-                continue
             case _:
-                names.append("")
+                names.append(_projection_name(projection))
                 continue
         for source in sources:
             if isinstance(source, _TableSource) or source.columns is None:

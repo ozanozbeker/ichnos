@@ -132,7 +132,6 @@ def test_a_slash_line_ends_a_query():
     ]
 
 
-def test_text_that_does_not_tokenize_is_one_query():
-    assert [q.text for q in ichnos.infer({"f": "SELECT 'open; SELECT 2"}).queries] == [
-        "SELECT 'open; SELECT 2"
-    ]
+def test_text_that_does_not_tokenize_is_one_unparsed_query():
+    graph = ichnos.infer({"f": "SELECT 'open; SELECT 2"})
+    assert [q.text for q in graph.unparsed] == ["SELECT 'open; SELECT 2"]

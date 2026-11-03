@@ -52,6 +52,16 @@ def _graph(corpus: Path, suffix: tuple[str, ...], encoding: str) -> Graph:
         raise IchnosError(message) from None
 
 
+def _note_unparsed(graph: Graph, corpus: Path) -> None:
+    """Write one stderr line when any query is unparsed, so a slice stays clean to paste."""
+    if graph.unparsed:
+        total = len(graph.queries) + len(graph.unparsed)
+        sys.stderr.write(
+            f"ichnos: {len(graph.unparsed)} of {total} queries unparsed;"
+            f" run ichnos unparsed {corpus} to list them\n"
+        )
+
+
 def _write(text: str, output: Path | None) -> None:
     # A command writes through `sys.stdout`, because cyclopts would print a returned string through Rich.
     if output is None:
@@ -83,7 +93,39 @@ def dbml(
     encoding
         The codec for a file with no BOM that fails UTF-8.
     """
-    _write(write_dbml(_graph(corpus, suffix, encoding)), output)
+    graph = _graph(corpus, suffix, encoding)
+    _write(write_dbml(graph), output)
+    _note_unparsed(graph, corpus)
+
+
+@app.command
+@_command
+def unparsed(
+    corpus: Path,
+    /,
+    *,
+    output: Output = None,
+    suffix: Suffix = (".sql",),
+    encoding: str = "cp1252",
+) -> None:
+    """List each query that ichnos could not read, with the first line of its error.
+
+    Parameters
+    ----------
+    corpus
+        A folder of query files, or one file.
+    output
+        The file to write, instead of stdout.
+    suffix
+        The suffix of the files to read in a folder, which can repeat.
+    encoding
+        The codec for a file with no BOM that fails UTF-8.
+    """
+    graph = _graph(corpus, suffix, encoding)
+    _write(
+        "".join(f"{q.name}: {q.error.splitlines()[0]}\n" for q in graph.unparsed),
+        output,
+    )
 
 
 def main() -> None:

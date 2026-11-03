@@ -99,3 +99,27 @@ def test_python_m_ichnos_writes_the_same_utf_8_bytes_as_the_output_file(tmp_path
     assert '"café" unknown'.encode() in stdout
     assert not stdout.startswith(b"\xef\xbb\xbf")
     assert b"\r" not in stdout
+
+
+def test_unparsed_lists_each_query_with_the_first_line_of_its_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+):
+    (tmp_path / "a.sql").write_text(
+        "SELECT t.x FROM t;\nALTER TABLE t ADD y NUMBER", encoding="utf-8"
+    )
+    (tmp_path / "b.sql").write_text(
+        "SELECT t.y FROM t WHERE t.z = :1", encoding="utf-8"
+    )
+    code, out, err = _run(capsys, "unparsed", str(tmp_path))
+    assert (code, err) == (0, "")
+    first, second = out.splitlines()
+    assert first == "a#2: not a SELECT, DML or a creating query: ALTER"
+    # The rest of sqlglot's message names its own class path, which can move between releases.
+    assert second.startswith("b: Required keyword: 'expression' missing")
+    code, out, err = _run(capsys, "dbml", str(tmp_path))
+    assert code == 0
+    assert out.startswith("Project ichnos {")
+    assert (
+        err
+        == f"ichnos: 2 of 3 queries unparsed; run ichnos unparsed {tmp_path} to list them\n"
+    )
