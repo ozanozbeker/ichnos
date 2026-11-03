@@ -1,110 +1,135 @@
-default_language_version.python = "3.13"
+default_language_version.python = "3.14"
+default_install_hook_types = ["pre-commit", "commit-msg"]
 default_stages = ["pre-commit"]
 
+# --- Conventional Commits ---
 [[repos]]
 repo = "https://github.com/compilerla/conventional-pre-commit"
 rev = "91ab4bf57e58b32adf1a122681f6ebe164d081c8"  # frozen: v4.4.0
-
-[[repos.hooks]]
-id = "conventional-pre-commit"
-stages = ["commit-msg"]
-args = [
-  "--strict",
+hooks = [
+  {
+    id = "conventional-pre-commit",
+    stages = ["commit-msg"],
+    # Listing types replaces the hook's defaults, so the list repeats them and adds `deps`, which CONTRIBUTING.md uses for a floor.
+    args = [
+      "--strict",
+      "build",
+      "chore",
+      "ci",
+      "deps",
+      "docs",
+      "feat",
+      "fix",
+      "perf",
+      "refactor",
+      "revert",
+      "style",
+      "test",
+    ]
+  }
 ]
 
+# --- Gitleaks ---
 [[repos]]
 repo = "https://github.com/gitleaks/gitleaks"
 rev = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e"  # frozen: v8.30.1
+hooks = [
+  { id = "gitleaks" },
+  # `gitleaks` scans staged changes and CI stages nothing, so CI runs this copy on the commits HEAD adds to its first parent.
+  { id = "gitleaks", alias = "gitleaks-ci", stages = ["manual"], entry = "gitleaks git --redact --verbose", args = ["--log-opts=HEAD^1..HEAD"] },
+]
 
-[[repos.hooks]]
-id = "gitleaks"
-
-[[repos]]
-repo = "https://github.com/pre-commit/pre-commit-hooks"
-rev = "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c"  # frozen: v6.0.0
-
-[[repos.hooks]]
-id = "trailing-whitespace"
-
-[[repos.hooks]]
-id = "end-of-file-fixer"
-
-[[repos.hooks]]
-id = "check-merge-conflict"
-
-[[repos.hooks]]
-id = "check-toml"
-
-[[repos.hooks]]
-id = "check-yaml"
-
-[[repos.hooks]]
-id = "check-case-conflict"
-
-[[repos.hooks]]
-id = "check-added-large-files"
-
-[[repos]]
-repo = "https://github.com/rhysd/actionlint"
-rev = "914e7df21a07ef503a81201c76d2b11c789d3fca"  # frozen: v1.7.12
-
-[[repos.hooks]]
-id = "actionlint"
-
-# zizmor checks workflows for security problems, which actionlint does not check.
+# --- Zizmor ---
 [[repos]]
 repo = "https://github.com/zizmorcore/zizmor-pre-commit"
 rev = "fa412071e4f5d44d44f9e365f4676f9df92456a2"  # frozen: v1.30.1
+hooks = [{ id = "zizmor" }]
 
-[[repos.hooks]]
-id = "zizmor"
+# --- actionlint ---
+# zizmor checks workflows for security problems, and actionlint checks that they are valid.
+[[repos]]
+repo = "https://github.com/rhysd/actionlint"
+rev = "914e7df21a07ef503a81201c76d2b11c789d3fca"  # frozen: v1.7.12
+hooks = [{ id = "actionlint" }]
 
+# --- typos ---
 [[repos]]
 repo = "https://github.com/crate-ci/typos"
 rev = "512fc24f32f44ab01972217aaaf3dc86ec234d53"  # frozen: v1.50.2
+hooks = [{ id = "typos" }]
 
-[[repos.hooks]]
-id = "typos"
+# --- Built-in ---
+# prek ships these hooks itself, so they need no clone and no pin.
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  # Without the flag, the hook checks only while a merge is in progress, so CI checked nothing.
+  { id = "check-merge-conflict", args = ["--assume-in-merge"] },
+  { id = "check-yaml" },
+  { id = "check-case-conflict" },
+  { id = "check-added-large-files" },
+  { id = "detect-private-key" },
+]
 
+# --- Local Tools ---
 [[repos]]
 repo = "local"
-
-[[repos.hooks]]
-id = "ruff-check"
-name = "ruff check"
-entry = "uv run ruff check --fix --force-exclude"
-language = "system"
-types_or = ["python", "pyi", "jupyter"]
-require_serial = true
-
-[[repos.hooks]]
-id = "ruff-format"
-name = "ruff format"
-entry = "uv run ruff format --force-exclude"
-language = "system"
-files = '\.(py|pyi|ipynb|md)$'
-require_serial = true
-
-[[repos.hooks]]
-id = "rumdl"
-name = "rumdl"
-entry = "uv run rumdl check --fix"
-language = "system"
-files = '\.md$'
-require_serial = true
-
-[[repos.hooks]]
-id = "uv-lock"
-name = "uv lock --check"
-entry = "uv lock --check"
-language = "system"
-files = '^(.*/)?(pyproject\.toml|uv\.lock)$'
-pass_filenames = false
-
-[[repos.hooks]]
-id = "ty"
-name = "ty"
-entry = "uv run ty check"
-language = "system"
-types = ["python"]
-pass_filenames = false
+hooks = [
+  {
+    id = "ruff-check",
+    name = "ruff check",
+    entry = "uv run ruff check --fix --force-exclude",
+    language = "system",
+    types_or = ["python", "pyi", "jupyter"],
+    require_serial = true,
+  },
+  {
+    id = "ruff-format",
+    name = "ruff format",
+    entry = "uv run ruff format --force-exclude",
+    language = "system",
+    # prek tags a `.qmd` page `quarto`, not `markdown`.
+    types_or = ["python", "pyi", "jupyter", "markdown", "quarto"],
+    require_serial = true,
+  },
+  {
+    id = "rumdl",
+    name = "rumdl",
+    entry = "uv run rumdl check --fix",
+    language = "system",
+    types_or = ["markdown", "quarto"],
+    require_serial = true,
+  },
+  {
+    id = "tombi-lint",
+    name = "tombi lint",
+    entry = "uv run tombi lint",
+    language = "system",
+    types = ["toml"],
+  },
+  {
+    id = "tombi-format",
+    name = "tombi format",
+    entry = "uv run tombi format",
+    language = "system",
+    types = ["toml"],
+  },
+  {
+    id = "uv-lock",
+    name = "uv lock --check",
+    entry = "uv lock --check",
+    language = "system",
+    files = '^(.*/)?(pyproject\.toml|uv\.lock)$',
+    pass_filenames = false,
+  },
+  {
+    id = "pyrefly",
+    name = "pyrefly",
+    entry = "uv run pyrefly check",
+    language = "system",
+    types = ["python"],
+    pass_filenames = false,
+  },
+]

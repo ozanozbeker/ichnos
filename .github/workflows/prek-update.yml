@@ -1,0 +1,72 @@
+name: Update hooks
+
+# Dependabot does not read `prek.toml`, and its version updates move only the dependencies `pyproject.toml` declares, so this workflow updates the hooks and every package in `uv.lock`.
+on:
+  schedule:
+    - cron: "17 6 1 * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  # `uv lock` can run a package's build backend, so this job holds no secret.
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          # uv follows setup-uv, which Dependabot bumps after the cooldown.
+          version: latest-known
+          enable-cache: false
+      # The 7 days match Dependabot's cooldown.
+      - run: |
+          uv run --locked --only-dev prek update --freeze --cooldown-days 7
+          uv lock --upgrade --exclude-newer '7 days'
+          # The first lock writes `exclude-newer` into `uv.lock`, and `uv lock --check` fails until this one removes it.
+          uv lock
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: update
+          path: |
+            prek.toml
+            uv.lock
+
+  # Only pinned actions run beside the App key, which mints tokens for every repo the App is installed on.
+  pr:
+    needs: update
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only jobs in this environment can read the App's private key, and `deployment: false` keeps each run from writing a deployment record.
+    environment:
+      name: release
+      deployment: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update
+      # Unlike `GITHUB_TOKEN`, an App token lets the PR run CI.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app.outputs.token }}
+          sign-commits: true
+          branch: prek-update
+          delete-branch: true
+          commit-message: "chore: update prek hooks and uv.lock"
+          title: "chore: update prek hooks and uv.lock"
+          body: "`prek update --freeze --cooldown-days 7` or `uv lock --upgrade --exclude-newer '7 days'` found newer releases."

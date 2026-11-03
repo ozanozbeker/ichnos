@@ -3,19 +3,20 @@ name = "ichnos"
 version = "0.0.1"
 description = "Infer a DBML schema and ERD from SQL queries alone, with no database connection."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Ozan Ozbeker", email = "github@ozanozbeker.com" }]
 maintainers = [{ name = "Ozan Ozbeker", email = "github@ozanozbeker.com" }]
 keywords = ["dbml", "erd", "schema", "sql"]
+# The Python classifiers and the test matrix in `ci.yml` list the same versions (CONTRIBUTING.md).
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Topic :: Database",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
@@ -28,20 +29,35 @@ Issues = "https://github.com/ozanozbeker/ichnos/issues"
 Repository = "https://github.com/ozanozbeker/ichnos"
 
 [dependency-groups]
-# The tools have no lower bound, because `uv.lock` pins each one and an upgrade moves it to the latest release.
 dev = [
-  "prek",
-  "pytest",
-  "ruff",
-  "rumdl",
-  "ty",
+  "coverage>=7.17.0",
+  "prek>=0.5.7",
+  "pyrefly>=1.4.0",
+  "pytest>=9.1.1",
+  "ruff>=0.17.2",
+  "rumdl>=0.3.0",
+  "tombi>=1.9.6",
 ]
+# Not in `dev`, so the test and lint jobs skip Quarto's Jupyter stack.
+docs = ["great-docs>=0.17"]
 
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]
 build-backend = "uv_build"
 
+[tool.coverage.run]
+source_pkgs = ["ichnos"]
+
+[tool.coverage.report]
+# Every other exclusion is a `# pragma: no cover` that a reviewer sees.
+exclude_also = ["if TYPE_CHECKING:"]
+fail_under = 100
+show_missing = true
+
 [tool.pytest.ini_options]
-addopts = ["-ra", "--strict-config", "--strict-markers", "--import-mode=importlib"]
-pythonpath = ["."]
+# importlib mode imports ichnos from the installed package, not from src/. tests/ needs no __init__.py.
+addopts = ["--strict-config", "--strict-markers", "--import-mode=importlib", "-ra"]
+# A new upstream deprecation fails the Dependabot PR that brings it in, before the removal breaks ichnos.
+filterwarnings = ["error"]
 testpaths = ["tests"]
+xfail_strict = true
