@@ -1,6 +1,7 @@
 # Literals give type and observed-value evidence, and ichnos never claims an enum
 
 A bare column compared with a literal, or assigned one, gives evidence of the column's type: text, number, datetime or interval.
+A value in an `INSERT` with no column list is assigned to the column that [ADR 0008](0008-declarations-settle-ambiguities-until-contradicted.md) maps it to by position.
 Oracle converts types implicitly, so `code = 5` runs against a text column, and the literal is evidence, not proof.
 
 A text or number literal under equality or assignment also gives an observed value.

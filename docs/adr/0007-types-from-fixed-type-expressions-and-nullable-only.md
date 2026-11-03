@@ -55,6 +55,8 @@ A column's name gives no type.
 ## Declared columns and report output columns
 
 A creating query's declared column, or a report's output column, whose expression has a fixed type gets that type as evidence.
+A declared column takes that type outright, because Oracle gives a table or view column the data type of its expression ([ADR 0008](0008-declarations-settle-ambiguities-until-contradicted.md)).
+Type evidence for another type from other queries raises no ambiguity for it.
 `COUNT(*) AS order_count` gives number, and 021's `'CURRENT' AS source` gives text.
 A projected literal gives no observed value, as ADR 0003 says.
 A bare column, or an expression whose type follows an upstream column such as `MAX(p.paid_at)`, goes to lineage.
@@ -62,7 +64,7 @@ A bare column, or an expression whose type follows an upstream column such as `M
 ## Two types
 
 A column with evidence for two types lists each type with its own evidence count.
-ichnos flags an ambiguity and picks neither type.
+ichnos flags an ambiguity and picks neither type, unless the column's declarations give it one type.
 
 ## Nullable
 
