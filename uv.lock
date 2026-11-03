@@ -591,13 +591,13 @@ docs = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "coverage" },
-    { name = "prek" },
-    { name = "pyrefly" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "rumdl" },
-    { name = "tombi" },
+    { name = "coverage", specifier = ">=7.17.0" },
+    { name = "prek", specifier = ">=0.5.7" },
+    { name = "pyrefly", specifier = ">=1.4.0" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "ruff", specifier = ">=0.17.2" },
+    { name = "rumdl", specifier = ">=0.3.0" },
+    { name = "tombi", specifier = ">=1.9.6" },
 ]
 docs = [{ name = "great-docs", specifier = ">=0.17" }]
 

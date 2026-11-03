@@ -29,15 +29,14 @@ Issues = "https://github.com/ozanozbeker/ichnos/issues"
 Repository = "https://github.com/ozanozbeker/ichnos"
 
 [dependency-groups]
-# The tools have no lower bound, because `uv.lock` pins each one and an upgrade moves it to the latest release.
 dev = [
-  "coverage",
-  "prek",
-  "pyrefly",
-  "pytest",
-  "ruff",
-  "rumdl",
-  "tombi",
+  "coverage>=7.17.0",
+  "prek>=0.5.7",
+  "pyrefly>=1.4.0",
+  "pytest>=9.1.1",
+  "ruff>=0.17.2",
+  "rumdl>=0.3.0",
+  "tombi>=1.9.6",
 ]
 # Not in `dev`, so the test and lint jobs skip Quarto's Jupyter stack.
 docs = ["great-docs>=0.17"]
