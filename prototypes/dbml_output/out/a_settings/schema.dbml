@@ -1,0 +1,217 @@
+Project ichnos {
+  database_type: 'Oracle'
+  Note: '''
+  Inferred by ichnos from 58 queries, with no database connection.
+  Counts are distinct queries. ichnos never claims a primary key: each key is a unique index.
+  `unknown` means no type evidence, and `text|number` means two types, an ambiguity.
+  `null` claims nullable. A column with no setting has no nullable claim.
+  `>?` means the many side refers to a key. `?<>?` means the direction is unknown.
+  The schema `report` holds reports. Its tables are queries, not tables.
+  '''
+}
+
+Table HR.EMPLOYEES [read: 6, keys: 'EMPLOYEE_ID: name match <S>_ID'] {
+  EMPLOYEE_ID unknown [select: 4, join: 3]
+  LAST_NAME unknown [select: 3]
+  MANAGER_ID unknown [select: 1, join: 2]
+  EMAIL text [join: 1, text: 1]
+  STATUS text [where: 1, text: 1, observed: 'A']
+
+  indexes {
+    EMPLOYEE_ID [unique]
+  }
+}
+
+Table INV.PRODUCTS [read: 7, keys: 'PRODUCT_ID: name match <S>_ID'] {
+  PRODUCT_ID unknown [select: 3, join: 6]
+  SKU unknown [select: 2]
+  CATEGORY_ID unknown [select: 2, join: 2]
+  CREATED_AT datetime [where: 1, datetime: 1]
+
+  indexes {
+    PRODUCT_ID [unique]
+  }
+}
+
+Table INV.SHIPMENTS [read: 3, keys: 'SHIPMENT_ID: name match <S>_ID, single_row 1'] {
+  SHIPMENT_ID unknown [where: 2]
+  WAREHOUSE_ID unknown [select: 2, join: 1]
+
+  indexes {
+    SHIPMENT_ID [unique]
+  }
+}
+
+Table INV.SHIPMENT_LINES [read: 2] {
+  SHIPMENT_ID unknown [where: 1, join: 1]
+  ORDER_ID unknown [join: 2]
+  LINE_NO unknown [join: 2]
+  QTY_SHIPPED number [select: 1, number: 1]
+}
+
+Table INV.STOCK_LEVELS [read: 3, write: 2, keys: '(PRODUCT_ID, WAREHOUSE_ID): merge 1'] {
+  PRODUCT_ID unknown [select: 1, join: 3, insert: 1]
+  WAREHOUSE_ID unknown [join: 2, where: 1, insert: 1]
+  QTY_ON_HAND number [select: 1, where: 1, set: 1, insert: 1, number: 1]
+  REORDER_POINT unknown [select: 1, where: 1]
+  UPDATED_AT datetime [set: 1, insert: 1, datetime: 2]
+
+  indexes {
+    (PRODUCT_ID, WAREHOUSE_ID) [unique]
+  }
+}
+
+Table INV.WAREHOUSES [read: 3, keys: 'ID: name match ID; WAREHOUSE_CODE: name match <S>_CODE'] {
+  ID unknown [select: 1, join: 3]
+  WAREHOUSE_CODE unknown [select: 2]
+  NAME unknown [select: 2]
+
+  indexes {
+    ID [unique]
+    WAREHOUSE_CODE [unique]
+  }
+}
+
+Table MART.CUSTOMER_DAILY_SALES [kind: 'base table', complete: true, declared: 1, read: 2, write: 1, keys: '(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE): grouped 1, merge 1'] {
+  CUSTOMER_ID unknown [declared: 1, insert: 1, select: 1, join: 1, group_by: 1]
+  SALES_DATE unknown [declared: 1, insert: 1, join: 1, where: 1]
+  CURRENCY_CODE unknown [declared: 1, insert: 1, join: 1]
+  LINE_COUNT number [declared: 1, insert: 1, set: 1, number: 1]
+  UNITS number [declared: 1, insert: 1, set: 1, number: 1]
+  NET_AMOUNT number [declared: 1, insert: 1, set: 1, aggregate: 1, number: 1]
+
+  indexes {
+    (CUSTOMER_ID, SALES_DATE, CURRENCY_CODE) [unique]
+  }
+}
+
+Table MART.CUSTOMER_SEGMENTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  CUSTOMER_ID unknown [declared: 1, select: 1]
+  CUSTOMER_NAME unknown [declared: 1, select: 1]
+  NET_AMOUNT_12M number [declared: 1, select: 1, aggregate: 1, where: 1, order_by: 1, number: 1]
+  SEGMENT text [declared: 1, select: 2, where: 2, set: 1, group_by: 1, text: 1, observed: 'KEY, STRATEGIC']
+}
+
+Table MART.ORDER_LINE_FACTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  ORDER_ID unknown [declared: 1, insert: 1]
+  LINE_NO unknown [declared: 1, insert: 1]
+  CUSTOMER_ID unknown [declared: 1, insert: 1, select: 2, group_by: 2]
+  SALES_DATE datetime [declared: 1, insert: 1, select: 2, where: 1, group_by: 2, datetime: 1]
+  CURRENCY_CODE unknown [declared: 1, insert: 1, select: 2, group_by: 2]
+  PRODUCT_ID unknown [declared: 1, insert: 1]
+  CATEGORY_ID unknown [declared: 1, insert: 1, select: 1]
+  UNITS unknown [declared: 1, insert: 1, aggregate: 2]
+  NET_AMOUNT number [declared: 1, insert: 1, aggregate: 3, number: 1]
+}
+
+Table MART.V_KEY_CUSTOMERS [kind: 'view', complete: true, declared: 1, read: 1] {
+  CUSTOMER_ID unknown [declared: 1, select: 1]
+  CUSTOMER_NAME unknown [declared: 1, select: 1]
+  NET_AMOUNT_12M unknown [declared: 1, select: 1, order_by: 1]
+  SEGMENT unknown [declared: 1]
+}
+
+Table SALES.CUSTOMERS [read: 16, ambiguity: '016 reads CREDIT_LIMIT, CUSTOMER_NAME, ORDER_DATE, ORDER_ID and ORDER_TOTAL unqualified over SALES.CUSTOMERS and SALES.ORDERS', keys: 'CUSTOMER_ID: name match <S>_ID'] {
+  CUSTOMER_ID unknown [select: 6, join: 12, where: 1]
+  CUSTOMER_NAME unknown [select: 9]
+  CUSTOMER_TYPE text [select: 2, where: 2, text: 2, observed: 'RETAIL, TRADE']
+  EMAIL text [select: 2, join: 1, text: 1]
+  STATUS text [where: 2, text: 2, observed: 'A']
+  CREATED_AT datetime [where: 1, datetime: 1]
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
+}
+
+Table SALES.ORDERS [read: 24, write: 1, ambiguity: '016 reads CREDIT_LIMIT, CUSTOMER_NAME, ORDER_DATE, ORDER_ID and ORDER_TOTAL unqualified over SALES.CUSTOMERS and SALES.ORDERS', keys: 'ORDER_ID: name match <S>_ID, generated 1'] {
+  ORDER_ID number [select: 14, join: 9, insert: 1, number: 1]
+  CUSTOMER_ID unknown [select: 8, join: 6, where: 3, insert: 1]
+  ORDER_DATE datetime [select: 9, where: 4, insert: 1, datetime: 3]
+  STATUS text [select: 3, where: 6, insert: 1, text: 6, observed: 'CANCELLED, NEW, SHIPPED']
+  SALES_REP_ID number [null, select: 3, insert: 1, number: 1, nullable: 2]
+  ORDER_TOTAL unknown [select: 2, where: 1]
+  CURRENCY_CODE unknown [select: 3, join: 1, insert: 1]
+  SHIP_TO_ADDRESS_ID unknown [join: 1, insert: 1]
+  BILL_TO_ADDRESS_ID unknown [join: 1, insert: 1]
+  CREATED_AT datetime [insert: 1, datetime: 1]
+
+  indexes {
+    ORDER_ID [unique]
+  }
+}
+
+Table SALES.ORDER_LINES [read: 9] {
+  ORDER_ID unknown [select: 4, join: 7]
+  LINE_NO unknown [select: 3, join: 2]
+  PRODUCT_ID unknown [select: 2, join: 5]
+  QUANTITY number [select: 5, number: 4]
+  UNIT_PRICE number [select: 3, number: 3]
+  DISCOUNT_PCT number [null, select: 2, number: 2, nullable: 2]
+}
+
+Table SALES.ORDER_PROMOTIONS [read: 1] {
+  ORDER_ID unknown [join: 1]
+  PROMO_ID unknown [join: 1]
+}
+
+Table SALES.PROMOTIONS [read: 2] {
+  PROMO_ID unknown [join: 1]
+  PROMO_CODE text [select: 1, where: 1, text: 1]
+  PERCENT_OFF unknown [select: 1]
+}
+
+Table CUSTOMERS [read: 1, ambiguity: 'may be SALES.CUSTOMERS (read 16)', keys: 'CUSTOMER_ID: name match <S>_ID'] {
+  CUSTOMER_ID unknown [select: 1, join: 1]
+  CUSTOMER_NAME unknown [select: 1]
+  CUSTOMER_TYPE text [select: 1, where: 1, text: 1, observed: 'TRADE']
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
+}
+
+Table ORDERS [read: 1, ambiguity: 'may be SALES.ORDERS (read 24)', keys: 'ORDER_ID: name match <S>_ID'] {
+  ORDER_ID unknown [select: 1]
+  ORDER_DATE unknown [select: 1]
+  CUSTOMER_ID unknown [join: 1]
+
+  indexes {
+    ORDER_ID [unique]
+  }
+}
+
+Table DEMO.DAILY_TOTALS [kind: 'base table|view', declared: 2, read: 1, ambiguity: 'two declarations differ: base table (1) or view (1); CURRENCY_CODE declared once', note: 'invented: two declarations'] {
+  DAY_DATE datetime [declared: 2, select: 1, datetime: 1]
+  TOTAL number [declared: 2, select: 1, number: 1]
+  CURRENCY_CODE unknown [declared: 1]
+}
+
+Table DEMO.PRICE_LIST [read: 4, note: 'invented: two types', keys: 'PRICE_ID: name match <S>_ID'] {
+  PRICE_ID unknown [select: 2]
+  PRICE_CODE "text|number" [select: 2, where: 4, text: 3, number: 1]
+
+  indexes {
+    PRICE_ID [unique]
+  }
+}
+
+Table DEMO.V_OPEN_TICKETS [kind: 'view', declared: 1, read: 3, contradicted: 'REGION is undeclared', note: 'invented: contradicted declaration'] {
+  TICKET_ID unknown [declared: 1, select: 3]
+  OPENED_AT datetime [declared: 1, select: 2, datetime: 1]
+  REGION unknown [undeclared: true, select: 1, where: 1]
+}
+
+Ref "join 6": SALES.ORDERS.CUSTOMER_ID >? SALES.CUSTOMERS.CUSTOMER_ID
+Ref "join 7": SALES.ORDER_LINES.ORDER_ID >? SALES.ORDERS.ORDER_ID
+Ref "join 4": SALES.ORDER_LINES.PRODUCT_ID >? INV.PRODUCTS.PRODUCT_ID
+Ref "join 1": SALES.ORDER_PROMOTIONS.ORDER_ID >? SALES.ORDERS.ORDER_ID
+Ref "join 1": SALES.ORDER_PROMOTIONS.PROMO_ID ?<>? SALES.PROMOTIONS.PROMO_ID
+Ref "join 2": HR.EMPLOYEES.MANAGER_ID >? HR.EMPLOYEES.EMPLOYEE_ID
+Ref "join 2": INV.STOCK_LEVELS.WAREHOUSE_ID >? INV.WAREHOUSES.ID
+Ref "join 1": INV.STOCK_LEVELS.PRODUCT_ID >? INV.PRODUCTS.PRODUCT_ID
+Ref "join 1": INV.SHIPMENT_LINES.(ORDER_ID, LINE_NO) ?<>? SALES.ORDER_LINES.(ORDER_ID, LINE_NO)
+Ref "join 1, shared reference to INV.PRODUCTS.PRODUCT_ID": SALES.ORDER_LINES.PRODUCT_ID ?<>? INV.STOCK_LEVELS.PRODUCT_ID
+Ref "join 1": ORDERS.CUSTOMER_ID >? CUSTOMERS.CUSTOMER_ID
+Ref "join 1": MART.CUSTOMER_DAILY_SALES.CUSTOMER_ID >? SALES.CUSTOMERS.CUSTOMER_ID
+Ref "join 1": MART.ORDER_LINE_FACTS.(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE) >? MART.CUSTOMER_DAILY_SALES.(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE)

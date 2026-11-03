@@ -1,0 +1,378 @@
+Project ichnos {
+  database_type: 'Oracle'
+  Note: '''
+  Inferred by ichnos from 58 queries, with no database connection.
+  Counts are distinct queries. ichnos never claims a primary key: each key is a unique index.
+  `unknown` means no type evidence, and `text|number` means two types, an ambiguity.
+  `null` claims nullable. A column with no setting has no nullable claim.
+  `>?` means the many side refers to a key. `?<>?` means the direction is unknown.
+  The schema `report` holds reports. Its tables are queries, not tables.
+  '''
+}
+
+Table HR.EMPLOYEES [read: 6, keys: 'EMPLOYEE_ID: name match <S>_ID'] {
+  EMPLOYEE_ID unknown [select: 4, join: 3]
+  LAST_NAME unknown [select: 3]
+  MANAGER_ID unknown [select: 1, join: 2]
+  EMAIL text [join: 1, text: 1]
+  STATUS text [where: 1, text: 1, observed: 'A']
+
+  indexes {
+    EMPLOYEE_ID [unique]
+  }
+}
+
+Table INV.PRODUCTS [read: 7, keys: 'PRODUCT_ID: name match <S>_ID'] {
+  PRODUCT_ID unknown [select: 3, join: 6]
+  SKU unknown [select: 2]
+  CATEGORY_ID unknown [select: 2, join: 2]
+  CREATED_AT datetime [where: 1, datetime: 1]
+
+  indexes {
+    PRODUCT_ID [unique]
+  }
+}
+
+Table INV.SHIPMENTS [read: 3, keys: 'SHIPMENT_ID: name match <S>_ID, single_row 1'] {
+  SHIPMENT_ID unknown [where: 2]
+  WAREHOUSE_ID unknown [select: 2, join: 1]
+
+  indexes {
+    SHIPMENT_ID [unique]
+  }
+}
+
+Table INV.SHIPMENT_LINES [read: 2] {
+  SHIPMENT_ID unknown [where: 1, join: 1]
+  ORDER_ID unknown [join: 2]
+  LINE_NO unknown [join: 2]
+  QTY_SHIPPED number [select: 1, number: 1]
+}
+
+Table INV.STOCK_LEVELS [read: 3, write: 2, keys: '(PRODUCT_ID, WAREHOUSE_ID): merge 1'] {
+  PRODUCT_ID unknown [select: 1, join: 3, insert: 1]
+  WAREHOUSE_ID unknown [join: 2, where: 1, insert: 1]
+  QTY_ON_HAND number [select: 1, where: 1, set: 1, insert: 1, number: 1]
+  REORDER_POINT unknown [select: 1, where: 1]
+  UPDATED_AT datetime [set: 1, insert: 1, datetime: 2]
+
+  indexes {
+    (PRODUCT_ID, WAREHOUSE_ID) [unique]
+  }
+}
+
+Table INV.WAREHOUSES [read: 3, keys: 'ID: name match ID; WAREHOUSE_CODE: name match <S>_CODE'] {
+  ID unknown [select: 1, join: 3]
+  WAREHOUSE_CODE unknown [select: 2]
+  NAME unknown [select: 2]
+
+  indexes {
+    ID [unique]
+    WAREHOUSE_CODE [unique]
+  }
+}
+
+Table MART.CUSTOMER_DAILY_SALES [kind: 'base table', complete: true, declared: 1, read: 2, write: 1, keys: '(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE): grouped 1, merge 1'] {
+  CUSTOMER_ID unknown [declared: 1, insert: 1, select: 1, join: 1, group_by: 1]
+  SALES_DATE unknown [declared: 1, insert: 1, join: 1, where: 1]
+  CURRENCY_CODE unknown [declared: 1, insert: 1, join: 1]
+  LINE_COUNT number [declared: 1, insert: 1, set: 1, number: 1]
+  UNITS number [declared: 1, insert: 1, set: 1, number: 1]
+  NET_AMOUNT number [declared: 1, insert: 1, set: 1, aggregate: 1, number: 1]
+
+  indexes {
+    (CUSTOMER_ID, SALES_DATE, CURRENCY_CODE) [unique]
+  }
+}
+
+Table MART.CUSTOMER_SEGMENTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  CUSTOMER_ID unknown [declared: 1, select: 1]
+  CUSTOMER_NAME unknown [declared: 1, select: 1]
+  NET_AMOUNT_12M number [declared: 1, select: 1, aggregate: 1, where: 1, order_by: 1, number: 1]
+  SEGMENT text [declared: 1, select: 2, where: 2, set: 1, group_by: 1, text: 1, observed: 'KEY, STRATEGIC']
+}
+
+Table MART.ORDER_LINE_FACTS [kind: 'base table', complete: true, declared: 1, read: 3, write: 1] {
+  ORDER_ID unknown [declared: 1, insert: 1]
+  LINE_NO unknown [declared: 1, insert: 1]
+  CUSTOMER_ID unknown [declared: 1, insert: 1, select: 2, group_by: 2]
+  SALES_DATE datetime [declared: 1, insert: 1, select: 2, where: 1, group_by: 2, datetime: 1]
+  CURRENCY_CODE unknown [declared: 1, insert: 1, select: 2, group_by: 2]
+  PRODUCT_ID unknown [declared: 1, insert: 1]
+  CATEGORY_ID unknown [declared: 1, insert: 1, select: 1]
+  UNITS unknown [declared: 1, insert: 1, aggregate: 2]
+  NET_AMOUNT number [declared: 1, insert: 1, aggregate: 3, number: 1]
+}
+
+Table MART.V_KEY_CUSTOMERS [kind: 'view', complete: true, declared: 1, read: 1] {
+  CUSTOMER_ID unknown [declared: 1, select: 1]
+  CUSTOMER_NAME unknown [declared: 1, select: 1]
+  NET_AMOUNT_12M unknown [declared: 1, select: 1, order_by: 1]
+  SEGMENT unknown [declared: 1]
+}
+
+Table SALES.CUSTOMERS [read: 16, ambiguity: '016 reads CREDIT_LIMIT, CUSTOMER_NAME, ORDER_DATE, ORDER_ID and ORDER_TOTAL unqualified over SALES.CUSTOMERS and SALES.ORDERS', keys: 'CUSTOMER_ID: name match <S>_ID'] {
+  CUSTOMER_ID unknown [select: 6, join: 12, where: 1]
+  CUSTOMER_NAME unknown [select: 9]
+  CUSTOMER_TYPE text [select: 2, where: 2, text: 2, observed: 'RETAIL, TRADE']
+  EMAIL text [select: 2, join: 1, text: 1]
+  STATUS text [where: 2, text: 2, observed: 'A']
+  CREATED_AT datetime [where: 1, datetime: 1]
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
+}
+
+Table SALES.ORDERS [read: 24, write: 1, ambiguity: '016 reads CREDIT_LIMIT, CUSTOMER_NAME, ORDER_DATE, ORDER_ID and ORDER_TOTAL unqualified over SALES.CUSTOMERS and SALES.ORDERS', keys: 'ORDER_ID: name match <S>_ID, generated 1'] {
+  ORDER_ID number [select: 14, join: 9, insert: 1, number: 1]
+  CUSTOMER_ID unknown [select: 8, join: 6, where: 3, insert: 1]
+  ORDER_DATE datetime [select: 9, where: 4, insert: 1, datetime: 3]
+  STATUS text [select: 3, where: 6, insert: 1, text: 6, observed: 'CANCELLED, NEW, SHIPPED']
+  SALES_REP_ID number [null, select: 3, insert: 1, number: 1, nullable: 2]
+  ORDER_TOTAL unknown [select: 2, where: 1]
+  CURRENCY_CODE unknown [select: 3, join: 1, insert: 1]
+  SHIP_TO_ADDRESS_ID unknown [join: 1, insert: 1]
+  BILL_TO_ADDRESS_ID unknown [join: 1, insert: 1]
+  CREATED_AT datetime [insert: 1, datetime: 1]
+
+  indexes {
+    ORDER_ID [unique]
+  }
+}
+
+Table SALES.ORDER_LINES [read: 9] {
+  ORDER_ID unknown [select: 4, join: 7]
+  LINE_NO unknown [select: 3, join: 2]
+  PRODUCT_ID unknown [select: 2, join: 5]
+  QUANTITY number [select: 5, number: 4]
+  UNIT_PRICE number [select: 3, number: 3]
+  DISCOUNT_PCT number [null, select: 2, number: 2, nullable: 2]
+}
+
+Table SALES.ORDER_PROMOTIONS [read: 1] {
+  ORDER_ID unknown [join: 1]
+  PROMO_ID unknown [join: 1]
+}
+
+Table SALES.PROMOTIONS [read: 2] {
+  PROMO_ID unknown [join: 1]
+  PROMO_CODE text [select: 1, where: 1, text: 1]
+  PERCENT_OFF unknown [select: 1]
+}
+
+Table CUSTOMERS [read: 1, ambiguity: 'may be SALES.CUSTOMERS (read 16)', keys: 'CUSTOMER_ID: name match <S>_ID'] {
+  CUSTOMER_ID unknown [select: 1, join: 1]
+  CUSTOMER_NAME unknown [select: 1]
+  CUSTOMER_TYPE text [select: 1, where: 1, text: 1, observed: 'TRADE']
+
+  indexes {
+    CUSTOMER_ID [unique]
+  }
+}
+
+Table ORDERS [read: 1, ambiguity: 'may be SALES.ORDERS (read 24)', keys: 'ORDER_ID: name match <S>_ID'] {
+  ORDER_ID unknown [select: 1]
+  ORDER_DATE unknown [select: 1]
+  CUSTOMER_ID unknown [join: 1]
+
+  indexes {
+    ORDER_ID [unique]
+  }
+}
+
+Table DEMO.DAILY_TOTALS [kind: 'base table|view', declared: 2, read: 1, ambiguity: 'two declarations differ: base table (1) or view (1); CURRENCY_CODE declared once', note: 'invented: two declarations'] {
+  DAY_DATE datetime [declared: 2, select: 1, datetime: 1]
+  TOTAL number [declared: 2, select: 1, number: 1]
+  CURRENCY_CODE unknown [declared: 1]
+}
+
+Table DEMO.PRICE_LIST [read: 4, note: 'invented: two types', keys: 'PRICE_ID: name match <S>_ID'] {
+  PRICE_ID unknown [select: 2]
+  PRICE_CODE "text|number" [select: 2, where: 4, text: 3, number: 1]
+
+  indexes {
+    PRICE_ID [unique]
+  }
+}
+
+Table DEMO.V_OPEN_TICKETS [kind: 'view', declared: 1, read: 3, contradicted: 'REGION is undeclared', note: 'invented: contradicted declaration'] {
+  TICKET_ID unknown [declared: 1, select: 3]
+  OPENED_AT datetime [declared: 1, select: 2, datetime: 1]
+  REGION unknown [undeclared: true, select: 1, where: 1]
+}
+
+Ref "join 6": SALES.ORDERS.CUSTOMER_ID >? SALES.CUSTOMERS.CUSTOMER_ID
+Ref "join 7": SALES.ORDER_LINES.ORDER_ID >? SALES.ORDERS.ORDER_ID
+Ref "join 4": SALES.ORDER_LINES.PRODUCT_ID >? INV.PRODUCTS.PRODUCT_ID
+Ref "join 1": SALES.ORDER_PROMOTIONS.ORDER_ID >? SALES.ORDERS.ORDER_ID
+Ref "join 1": SALES.ORDER_PROMOTIONS.PROMO_ID ?<>? SALES.PROMOTIONS.PROMO_ID
+Ref "join 2": HR.EMPLOYEES.MANAGER_ID >? HR.EMPLOYEES.EMPLOYEE_ID
+Ref "join 2": INV.STOCK_LEVELS.WAREHOUSE_ID >? INV.WAREHOUSES.ID
+Ref "join 1": INV.STOCK_LEVELS.PRODUCT_ID >? INV.PRODUCTS.PRODUCT_ID
+Ref "join 1": INV.SHIPMENT_LINES.(ORDER_ID, LINE_NO) ?<>? SALES.ORDER_LINES.(ORDER_ID, LINE_NO)
+Ref "join 1, shared reference to INV.PRODUCTS.PRODUCT_ID": SALES.ORDER_LINES.PRODUCT_ID ?<>? INV.STOCK_LEVELS.PRODUCT_ID
+Ref "join 1": ORDERS.CUSTOMER_ID >? CUSTOMERS.CUSTOMER_ID
+Ref "join 1": MART.CUSTOMER_DAILY_SALES.CUSTOMER_ID >? SALES.CUSTOMERS.CUSTOMER_ID
+Ref "join 1": MART.ORDER_LINE_FACTS.(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE) >? MART.CUSTOMER_DAILY_SALES.(CUSTOMER_ID, SALES_DATE, CURRENCY_CODE)
+
+Table report."016_unqualified_columns_in_join" [kind: 'report', ambiguity: 'filter on ORDER_TOTAL and CREDIT_LIMIT: SALES.ORDERS or SALES.CUSTOMERS'] {
+  ORDER_ID unknown [ambiguity: 'upstream SALES.ORDERS.ORDER_ID (14) or SALES.CUSTOMERS.ORDER_ID (0)']
+  ORDER_DATE unknown [ambiguity: 'upstream SALES.ORDERS.ORDER_DATE (9) or SALES.CUSTOMERS.ORDER_DATE (0)']
+  CUSTOMER_NAME unknown [ambiguity: 'upstream SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (9)']
+  CREDIT_LIMIT unknown [ambiguity: 'upstream SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0)']
+}
+
+Table report."038_daily_reports#1" [kind: 'report'] {
+  NEW_ORDERS number
+}
+
+Table report."038_daily_reports#2" [kind: 'report'] {
+  NEW_CUSTOMERS number
+}
+
+Table report."054_segment_summary" [kind: 'report'] {
+  SEGMENT unknown
+  CUSTOMER_COUNT number
+  NET_AMOUNT number
+}
+
+Table report."055_key_customers" [kind: 'report'] {
+  CUSTOMER_ID unknown
+  CUSTOMER_NAME unknown
+  NET_AMOUNT_12M unknown
+}
+
+Table report."demo/unaliased_columns#2" [kind: 'report', note: 'invented: unaliased and repeated output names'] {
+  ORDER_ID unknown
+  "ORDER_ID (2)" unknown
+  "COUNT(*)" number
+  "NVL(O.SALES_REP_ID,-1)" number
+}
+
+// DBML raises on a column that depends on itself, so each self-dependency is a column property.
+Metadata Column INV.STOCK_LEVELS.QTY_ON_HAND {
+  self_dependency: 'TRANSFORMATION 1'
+}
+Metadata Column MART.CUSTOMER_SEGMENTS.SEGMENT {
+  self_dependency: 'TRANSFORMATION 1'
+}
+
+// INV.STOCK_LEVELS
+Dep: INV.SHIPMENTS -> INV.STOCK_LEVELS [queries: 1]
+Dep: INV.SHIPMENT_LINES -> INV.STOCK_LEVELS [queries: 1]
+Dep: INV.STOCK_LEVELS -> INV.STOCK_LEVELS [queries: 1]
+Dep: SALES.ORDER_LINES -> INV.STOCK_LEVELS [queries: 1]
+Dep: INV.SHIPMENTS.SHIPMENT_ID -> INV.STOCK_LEVELS [filter: 1]
+Dep: INV.SHIPMENTS.WAREHOUSE_ID -> INV.STOCK_LEVELS [filter: 1]
+Dep: INV.STOCK_LEVELS.WAREHOUSE_ID -> INV.STOCK_LEVELS [filter: 1]
+Dep: INV.SHIPMENT_LINES.LINE_NO -> INV.STOCK_LEVELS.QTY_ON_HAND [join: 1]
+Dep: INV.SHIPMENT_LINES.ORDER_ID -> INV.STOCK_LEVELS.QTY_ON_HAND [join: 1]
+Dep: INV.SHIPMENT_LINES.QTY_SHIPPED -> INV.STOCK_LEVELS.QTY_ON_HAND [aggregation: 1]
+Dep: INV.SHIPMENT_LINES.SHIPMENT_ID -> INV.STOCK_LEVELS.QTY_ON_HAND [filter: 1]
+Dep: INV.STOCK_LEVELS.PRODUCT_ID -> INV.STOCK_LEVELS.QTY_ON_HAND [join: 1]
+Dep: SALES.ORDER_LINES.LINE_NO -> INV.STOCK_LEVELS.QTY_ON_HAND [join: 1]
+Dep: SALES.ORDER_LINES.ORDER_ID -> INV.STOCK_LEVELS.QTY_ON_HAND [join: 1]
+Dep: SALES.ORDER_LINES.PRODUCT_ID -> INV.STOCK_LEVELS.QTY_ON_HAND [join: 1]
+
+// MART.CUSTOMER_DAILY_SALES
+Dep: MART.CUSTOMER_DAILY_SALES -> MART.CUSTOMER_DAILY_SALES [queries: 1]
+Dep: MART.ORDER_LINE_FACTS -> MART.CUSTOMER_DAILY_SALES [queries: 2]
+Dep: MART.CUSTOMER_DAILY_SALES.CURRENCY_CODE -> MART.CUSTOMER_DAILY_SALES [join: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.CUSTOMER_ID -> MART.CUSTOMER_DAILY_SALES [join: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.SALES_DATE -> MART.CUSTOMER_DAILY_SALES [join: 1]
+Dep: MART.ORDER_LINE_FACTS.CURRENCY_CODE -> MART.CUSTOMER_DAILY_SALES [join: 1, group_by: 2]
+Dep: MART.ORDER_LINE_FACTS.CUSTOMER_ID -> MART.CUSTOMER_DAILY_SALES [join: 1, group_by: 2]
+Dep: MART.ORDER_LINE_FACTS.SALES_DATE -> MART.CUSTOMER_DAILY_SALES [join: 1, filter: 1, group_by: 2]
+Dep: MART.ORDER_LINE_FACTS.CURRENCY_CODE -> MART.CUSTOMER_DAILY_SALES.CURRENCY_CODE [identity: 2]
+Dep: MART.ORDER_LINE_FACTS.CUSTOMER_ID -> MART.CUSTOMER_DAILY_SALES.CUSTOMER_ID [identity: 2]
+Dep: MART.ORDER_LINE_FACTS -> MART.CUSTOMER_DAILY_SALES.LINE_COUNT [aggregation: 2]
+Dep: MART.ORDER_LINE_FACTS.NET_AMOUNT -> MART.CUSTOMER_DAILY_SALES.NET_AMOUNT [aggregation: 2]
+Dep: MART.ORDER_LINE_FACTS.SALES_DATE -> MART.CUSTOMER_DAILY_SALES.SALES_DATE [identity: 2]
+Dep: MART.ORDER_LINE_FACTS.UNITS -> MART.CUSTOMER_DAILY_SALES.UNITS [aggregation: 2]
+
+// MART.CUSTOMER_SEGMENTS
+Dep: MART.CUSTOMER_DAILY_SALES -> MART.CUSTOMER_SEGMENTS [queries: 1]
+Dep: MART.CUSTOMER_SEGMENTS -> MART.CUSTOMER_SEGMENTS [queries: 1]
+Dep: SALES.CUSTOMERS -> MART.CUSTOMER_SEGMENTS [queries: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.CUSTOMER_ID -> MART.CUSTOMER_SEGMENTS [join: 1, group_by: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.SALES_DATE -> MART.CUSTOMER_SEGMENTS [filter: 1]
+Dep: MART.CUSTOMER_SEGMENTS.SEGMENT -> MART.CUSTOMER_SEGMENTS [filter: 1]
+Dep: SALES.CUSTOMERS.CUSTOMER_ID -> MART.CUSTOMER_SEGMENTS [join: 1]
+Dep: SALES.CUSTOMERS.CUSTOMER_ID -> MART.CUSTOMER_SEGMENTS.CUSTOMER_ID [identity: 1]
+Dep: SALES.CUSTOMERS.CUSTOMER_NAME -> MART.CUSTOMER_SEGMENTS.CUSTOMER_NAME [identity: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.NET_AMOUNT -> MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M [aggregation: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.NET_AMOUNT -> MART.CUSTOMER_SEGMENTS.SEGMENT [conditional: 1]
+Dep: MART.CUSTOMER_DAILY_SALES.SALES_DATE -> MART.CUSTOMER_SEGMENTS.SEGMENT [conditional: 1]
+Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> MART.CUSTOMER_SEGMENTS.SEGMENT [conditional: 1]
+
+// MART.ORDER_LINE_FACTS
+Dep: INV.PRODUCTS -> MART.ORDER_LINE_FACTS [queries: 2]
+Dep: SALES.ORDERS -> MART.ORDER_LINE_FACTS [queries: 2]
+Dep: SALES.ORDER_LINES -> MART.ORDER_LINE_FACTS [queries: 2]
+Dep: INV.PRODUCTS.PRODUCT_ID -> MART.ORDER_LINE_FACTS [join: 2]
+Dep: SALES.ORDERS.ORDER_DATE -> MART.ORDER_LINE_FACTS [filter: 1]
+Dep: SALES.ORDERS.ORDER_ID -> MART.ORDER_LINE_FACTS [join: 2]
+Dep: SALES.ORDERS.STATUS -> MART.ORDER_LINE_FACTS [filter: 2]
+Dep: SALES.ORDER_LINES.ORDER_ID -> MART.ORDER_LINE_FACTS [join: 2]
+Dep: SALES.ORDER_LINES.PRODUCT_ID -> MART.ORDER_LINE_FACTS [join: 2]
+Dep: INV.PRODUCTS.CATEGORY_ID -> MART.ORDER_LINE_FACTS.CATEGORY_ID [identity: 2]
+Dep: SALES.ORDERS.CURRENCY_CODE -> MART.ORDER_LINE_FACTS.CURRENCY_CODE [identity: 2]
+Dep: SALES.ORDERS.CUSTOMER_ID -> MART.ORDER_LINE_FACTS.CUSTOMER_ID [identity: 2]
+Dep: SALES.ORDER_LINES.LINE_NO -> MART.ORDER_LINE_FACTS.LINE_NO [identity: 2]
+Dep: SALES.ORDER_LINES.DISCOUNT_PCT -> MART.ORDER_LINE_FACTS.NET_AMOUNT [transformation: 2]
+Dep: SALES.ORDER_LINES.QUANTITY -> MART.ORDER_LINE_FACTS.NET_AMOUNT [transformation: 2]
+Dep: SALES.ORDER_LINES.UNIT_PRICE -> MART.ORDER_LINE_FACTS.NET_AMOUNT [transformation: 2]
+Dep: SALES.ORDERS.ORDER_ID -> MART.ORDER_LINE_FACTS.ORDER_ID [identity: 2]
+Dep: SALES.ORDER_LINES.PRODUCT_ID -> MART.ORDER_LINE_FACTS.PRODUCT_ID [identity: 2]
+Dep: SALES.ORDERS.ORDER_DATE -> MART.ORDER_LINE_FACTS.SALES_DATE [transformation: 2]
+Dep: SALES.ORDER_LINES.QUANTITY -> MART.ORDER_LINE_FACTS.UNITS [identity: 2]
+
+// MART.V_KEY_CUSTOMERS
+Dep: MART.CUSTOMER_SEGMENTS -> MART.V_KEY_CUSTOMERS [queries: 1]
+Dep: MART.CUSTOMER_SEGMENTS.SEGMENT -> MART.V_KEY_CUSTOMERS [filter: 1]
+Dep: MART.CUSTOMER_SEGMENTS.CUSTOMER_ID -> MART.V_KEY_CUSTOMERS.CUSTOMER_ID [identity: 1]
+Dep: MART.CUSTOMER_SEGMENTS.CUSTOMER_NAME -> MART.V_KEY_CUSTOMERS.CUSTOMER_NAME [identity: 1]
+Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> MART.V_KEY_CUSTOMERS.NET_AMOUNT_12M [identity: 1]
+Dep: MART.CUSTOMER_SEGMENTS.SEGMENT -> MART.V_KEY_CUSTOMERS.SEGMENT [identity: 1]
+
+// report.016_unqualified_columns_in_join
+Dep: SALES.CUSTOMERS -> report."016_unqualified_columns_in_join" [queries: 1]
+Dep: SALES.ORDERS -> report."016_unqualified_columns_in_join" [queries: 1]
+Dep: SALES.CUSTOMERS.CUSTOMER_ID -> report."016_unqualified_columns_in_join" [join: 1]
+Dep: SALES.ORDERS.CUSTOMER_ID -> report."016_unqualified_columns_in_join" [join: 1]
+
+// report.038_daily_reports#1
+Dep: SALES.ORDERS -> report."038_daily_reports#1" [queries: 1]
+Dep: SALES.ORDERS.ORDER_DATE -> report."038_daily_reports#1" [filter: 1]
+Dep: SALES.ORDERS -> report."038_daily_reports#1".NEW_ORDERS [aggregation: 1]
+
+// report.038_daily_reports#2
+Dep: SALES.CUSTOMERS -> report."038_daily_reports#2" [queries: 1]
+Dep: SALES.CUSTOMERS.CREATED_AT -> report."038_daily_reports#2" [filter: 1]
+Dep: SALES.CUSTOMERS -> report."038_daily_reports#2".NEW_CUSTOMERS [aggregation: 1]
+
+// report.054_segment_summary
+Dep: MART.CUSTOMER_SEGMENTS -> report."054_segment_summary" [queries: 1]
+Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> report."054_segment_summary" [sort: 1]
+Dep: MART.CUSTOMER_SEGMENTS.SEGMENT -> report."054_segment_summary" [group_by: 1]
+Dep: MART.CUSTOMER_SEGMENTS -> report."054_segment_summary".CUSTOMER_COUNT [aggregation: 1]
+Dep: MART.CUSTOMER_SEGMENTS.NET_AMOUNT_12M -> report."054_segment_summary".NET_AMOUNT [aggregation: 1]
+Dep: MART.CUSTOMER_SEGMENTS.SEGMENT -> report."054_segment_summary".SEGMENT [identity: 1]
+
+// report.055_key_customers
+Dep: MART.V_KEY_CUSTOMERS -> report."055_key_customers" [queries: 1]
+Dep: MART.V_KEY_CUSTOMERS.NET_AMOUNT_12M -> report."055_key_customers" [sort: 1]
+Dep: MART.V_KEY_CUSTOMERS.CUSTOMER_ID -> report."055_key_customers".CUSTOMER_ID [identity: 1]
+Dep: MART.V_KEY_CUSTOMERS.CUSTOMER_NAME -> report."055_key_customers".CUSTOMER_NAME [identity: 1]
+Dep: MART.V_KEY_CUSTOMERS.NET_AMOUNT_12M -> report."055_key_customers".NET_AMOUNT_12M [identity: 1]
+
+// report.demo/unaliased_columns#2
+Dep: SALES.ORDERS -> report."demo/unaliased_columns#2" [queries: 1]
+Dep: SALES.ORDER_LINES -> report."demo/unaliased_columns#2" [queries: 1]
+Dep: SALES.ORDERS.ORDER_ID -> report."demo/unaliased_columns#2" [join: 1]
+Dep: SALES.ORDER_LINES.ORDER_ID -> report."demo/unaliased_columns#2" [join: 1]
+Dep: SALES.ORDER_LINES -> report."demo/unaliased_columns#2"."COUNT(*)" [aggregation: 1]
+Dep: SALES.ORDERS.SALES_REP_ID -> report."demo/unaliased_columns#2"."NVL(O.SALES_REP_ID,-1)" [transformation: 1]
+Dep: SALES.ORDERS.ORDER_ID -> report."demo/unaliased_columns#2".ORDER_ID [identity: 1]
+Dep: SALES.ORDER_LINES.ORDER_ID -> report."demo/unaliased_columns#2"."ORDER_ID (2)" [identity: 1]
