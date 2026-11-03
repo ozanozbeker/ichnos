@@ -4,8 +4,9 @@
 Every record compares and hashes by name only, because `Table.columns` and `Column.table` form a cycle.
 """
 
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ichnos import _infer, _read
 
@@ -100,6 +101,44 @@ class UnparsedQuery:
     error: str = field(compare=False)
 
 
+type AmbiguityKind = Literal["column", "owner"]
+
+
+@dataclass(frozen=True, slots=True)
+class Ambiguity:
+    """A point where the corpus admits more than one reading, which ichnos records without picking one (ADR 0001).
+
+    Attributes
+    ----------
+    kind
+        What the readings differ on. `"column"` is an unqualified column that several tables can hold,
+        and `"owner"` is a table with no owner that shares its name with tables that have one.
+    query
+        The query that holds the ambiguity.
+    subject
+        The name that the readings differ on, such as the column `ORDER_ID` or the table `CUSTOMERS`.
+    candidates
+        Each candidate's name, such as `SALES.ORDERS.ORDER_ID`, with the queries behind it.
+        Those queries give the candidate its own evidence count, and the ambiguity's query is never among them.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer(
+        {"q": "SELECT order_id FROM sales.orders o, sales.customers c"}
+    )
+    graph.ambiguities
+    ```
+    """
+
+    kind: AmbiguityKind
+    query: Query
+    subject: str
+    candidates: Mapping[str, tuple[Query, ...]] = field(compare=False)
+
+
 @dataclass(frozen=True, slots=True)
 class Column:
     """A column of a table that some query references.
@@ -113,6 +152,8 @@ class Column:
     references
         The queries that reference the column, by position.
         A position's evidence count is the number of distinct texts among its queries.
+    ambiguities
+        Each ambiguity with the column among its candidates.
 
     Examples
     --------
@@ -129,6 +170,7 @@ class Column:
     table: Table = field(repr=False)
     name: str
     references: Mapping[Position, tuple[Query, ...]] = field(compare=False, repr=False)
+    ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +189,8 @@ class Table:
         The queries that read the table.
     write
         The queries that write the table with DML.
+    ambiguities
+        Each ambiguity with the table among its candidates, and each owner ambiguity of a table with no owner.
 
     Examples
     --------
@@ -163,6 +207,7 @@ class Table:
     columns: tuple[Column, ...] = field(compare=False, repr=False)
     read: tuple[Query, ...] = field(compare=False, repr=False)
     write: tuple[Query, ...] = field(compare=False, repr=False)
+    ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +222,8 @@ class Graph:
         Every query that ichnos read, by file key and then by position.
     unparsed
         Every query that ichnos could not read whole, by file key and then by position.
+    ambiguities
+        Every ambiguity, by query and then by subject.
 
     Examples
     --------
@@ -191,6 +238,7 @@ class Graph:
     tables: tuple[Table, ...]
     queries: tuple[Query, ...]
     unparsed: tuple[UnparsedQuery, ...]
+    ambiguities: tuple[Ambiguity, ...]
 
 
 def count(queries: Iterable[Query]) -> int:
@@ -253,32 +301,97 @@ def infer(files: Mapping[str, str]) -> Graph:
             )
         else:
             read.append(query)
-    evidence = _infer.combine(traces)
-    tables = [
-        _table(key, evidence[key], read)
-        for key in sorted(evidence, key=lambda k: (k[0] or "", k[1]))
-    ]
-    return Graph(tuple(tables), tuple(read), tuple(unparsed))
+    return _Builder(read, _infer.combine(traces)).graph(unparsed)
 
 
-def _table(
-    key: _read.TableKey, evidence: _infer.TableEvidence, queries: list[Query]
-) -> Table:
-    def records(indices: set[int]) -> tuple[Query, ...]:
-        return tuple(queries[i] for i in sorted(indices))
+def _name(owner: str | None, *names: str) -> str:
+    return ".".join(n for n in (owner, *names) if n is not None)
 
-    table = Table(key[0], key[1], (), records(evidence.read), records(evidence.write))
-    columns = tuple(
-        Column(
-            table,
-            name,
-            {
-                position: records(found)
-                for position, found in evidence.columns[name].references.items()
-            },
+
+class _Builder:
+    """Turn combined evidence into linked records, whose cycles need each record built before the next."""
+
+    def __init__(self, queries: list[Query], evidence: _infer.Evidence) -> None:
+        self.queries = queries
+        self.evidence = evidence
+        self.ambiguities: dict[object, list[Ambiguity]] = defaultdict(list)
+
+    def records(self, indices: Iterable[int]) -> tuple[Query, ...]:
+        return tuple(self.queries[i] for i in sorted(indices))
+
+    def graph(self, unparsed: list[UnparsedQuery]) -> Graph:
+        ambiguities = [*self._column_ambiguities(), *self._owner_ambiguities()]
+        order = {query: index for index, query in enumerate(self.queries)}
+        for found in self.ambiguities.values():
+            found.sort(key=lambda a: (order[a.query], a.subject))
+        ambiguities.sort(key=lambda a: (order[a.query], a.subject))
+        keys = sorted(self.evidence.tables, key=lambda k: (k[0] or "", k[1]))
+        tables = tuple(self._table(key) for key in keys)
+        return Graph(tables, tuple(self.queries), tuple(unparsed), tuple(ambiguities))
+
+    def _column_ambiguities(self) -> list[Ambiguity]:
+        ambiguities: list[Ambiguity] = []
+        for found in self.evidence.ambiguous:
+            candidates: dict[str, tuple[Query, ...]] = {}
+            for key in found.candidates:
+                column = self.evidence.tables[key].columns.get(found.name)
+                indices = set().union(*column.references.values()) if column else set()
+                candidates[_name(*key, found.name)] = self.records(
+                    indices - {found.index}
+                )
+            ambiguity = Ambiguity(
+                "column", self.queries[found.index], found.name, candidates
+            )
+            ambiguities.append(ambiguity)
+            for key in found.candidates:
+                self.ambiguities[key].append(ambiguity)
+                self.ambiguities[(key, found.name)].append(ambiguity)
+        return ambiguities
+
+    def _owner_ambiguities(self) -> list[Ambiguity]:
+        ambiguities: list[Ambiguity] = []
+        for owner, name in self.evidence.tables:
+            if owner is not None:
+                continue
+            namesakes = sorted(
+                k for k in self.evidence.tables if k[0] is not None and k[1] == name
+            )
+            table = self.evidence.tables[(owner, name)]
+            for index in sorted(table.read | table.write) if namesakes else ():
+                candidates = {
+                    _name(*k): self.records(
+                        (self.evidence.tables[k].read | self.evidence.tables[k].write)
+                        - {index}
+                    )
+                    for k in namesakes
+                }
+                ambiguity = Ambiguity("owner", self.queries[index], name, candidates)
+                ambiguities.append(ambiguity)
+                self.ambiguities[(owner, name)].append(ambiguity)
+        return ambiguities
+
+    def _table(self, key: _read.TableKey) -> Table:
+        evidence = self.evidence.tables[key]
+        table = Table(
+            key[0],
+            key[1],
+            (),
+            self.records(evidence.read),
+            self.records(evidence.write),
+            tuple(self.ambiguities[key]),
         )
-        for name in sorted(evidence.columns)
-    )
-    # The records are frozen, and a column needs its table before the table can hold it.
-    object.__setattr__(table, "columns", columns)
-    return table
+        columns = tuple(
+            Column(
+                table,
+                name,
+                {
+                    position: self.records(found)
+                    for position, found in evidence.columns[name].references.items()
+                },
+                tuple(self.ambiguities[(key, name)]),
+            )
+            for name in sorted(evidence.columns)
+        )
+        # The records are frozen, and a column needs its table before the table can hold it.
+        object.__setattr__(table, "columns", columns)
+        return table

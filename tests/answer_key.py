@@ -141,7 +141,7 @@ def shown(key: AnswerKey) -> tuple[set[Name], set[tuple[Name, str]]]:
 
 
 def score_schema(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
-    """Yield every table and column claim that is not a `match`, and every fact the corpus shows that ichnos misses."""
+    """Yield every table, column and ambiguity claim that is not a `match`, and every fact the corpus shows that ichnos misses."""
     claimed_tables: set[Name] = set()
     claimed_columns: set[tuple[Name, str]] = set()
     for table in graph.tables:
@@ -155,11 +155,35 @@ def score_schema(graph: ichnos.Graph, key: AnswerKey) -> Iterator[Deviation]:
             if column.name not in key.tables[resolved].columns:
                 subject = dbml_name(table.owner, table.name, column.name)
                 yield Deviation("column", subject, "extra")
+    for ambiguity in graph.ambiguities:
+        truths = _truths(ambiguity, key)
+        subject = f"{ambiguity.query.name}: {ambiguity.subject}"
+        if truths:
+            yield Deviation("ambiguity", subject, "ambiguous")
+            claimed_columns |= {t for t in truths if t[1]}
+        else:
+            yield Deviation("ambiguity", subject, "extra")
     shown_tables, shown_columns = shown(key)
     for name in sorted(shown_tables - claimed_tables):
         yield Deviation("table", dbml_name(*name), "miss")
     for name, column in sorted(shown_columns - claimed_columns):
         yield Deviation("column", dbml_name(*name, column), "miss")
+
+
+def _truths(ambiguity: ichnos.Ambiguity, key: AnswerKey) -> list[tuple[Name, str]]:
+    """Return the candidates of an ambiguity that hold in the answer key."""
+    truths: list[tuple[Name, str]] = []
+    for candidate in ambiguity.candidates:
+        if ambiguity.kind == "column":
+            owner, table, column = candidate.split(".")
+            resolved = key.resolve(owner, table)
+            if resolved is not None and column in key.tables[resolved].columns:
+                truths.append((resolved, column))
+        else:
+            resolved = key.resolve(None, ambiguity.subject)
+            if resolved is not None and resolved == tuple(candidate.split(".")):
+                truths.append((resolved, ""))
+    return truths
 
 
 def schema_deviations() -> dict[Deviation, str]:

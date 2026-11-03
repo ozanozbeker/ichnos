@@ -3,6 +3,8 @@
 from ichnos._corpus import read
 from ichnos._dbml import dbml
 from ichnos._graph import (
+    Ambiguity,
+    AmbiguityKind,
     Column,
     Graph,
     IchnosError,
@@ -14,6 +16,8 @@ from ichnos._graph import (
 from ichnos._read import Position
 
 __all__ = [
+    "Ambiguity",
+    "AmbiguityKind",
     "Column",
     "Graph",
     "IchnosError",

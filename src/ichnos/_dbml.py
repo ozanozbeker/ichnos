@@ -6,7 +6,7 @@ The graph module holds the records, and this module turns them into text that `@
 import re
 from typing import TYPE_CHECKING
 
-from ichnos._graph import Column, Graph, Table, count
+from ichnos._graph import Ambiguity, Column, Graph, Table, count
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,7 +68,13 @@ def _project(graph: Graph) -> str:
 
 
 def _table(table: Table) -> str:
-    settings = _settings([("read", count(table.read)), ("write", count(table.write))])
+    settings = _settings(
+        [
+            ("read", count(table.read)),
+            ("write", count(table.write)),
+            ("ambiguity", "; ".join(_ambiguity(a) for a in table.ambiguities)),
+        ]
+    )
     columns = [_column(c) for c in table.columns] or ['  "*" unknown']
     return f"Table {_table_name(table)}{settings} {{\n" + "\n".join(columns) + "\n}"
 
@@ -78,9 +84,27 @@ def _column(column: Column) -> str:
     return f"  {_name(column.name)} unknown{_settings(counts)}"
 
 
-def _settings(counts: Sequence[tuple[str, int]]) -> str:
-    written = [f"{key}: {value}" for key, value in counts if value]
+def _ambiguity(ambiguity: Ambiguity) -> str:
+    """Write one ambiguity with each candidate's evidence count, naming its query as a report's name does."""
+    candidates = " or ".join(
+        f"{name} ({count(q)})" for name, q in ambiguity.candidates.items()
+    )
+    verb = "may be" if ambiguity.kind == "owner" else "is"
+    return f"{ambiguity.query.name}: {ambiguity.subject} {verb} {candidates}"
+
+
+def _settings(settings: Sequence[tuple[str, int | str]]) -> str:
+    """Write the custom properties that hold a count above 0 or a string that is not empty."""
+    written = [
+        f"{key}: {_string(value) if isinstance(value, str) else value}"
+        for key, value in settings
+        if value
+    ]
     return f" [{', '.join(written)}]" if written else ""
+
+
+def _string(value: str) -> str:
+    return f"'{value.translate(_ESCAPES)}'"
 
 
 def _table_name(table: Table) -> str:

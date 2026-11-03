@@ -34,9 +34,27 @@ class TableEvidence:
     )
 
 
-def combine(traces: Sequence[Trace]) -> dict[TableKey, TableEvidence]:
+@dataclass(frozen=True, slots=True)
+class AmbiguousColumn:
+    """An unqualified column in one query that several tables can hold."""
+
+    index: int
+    name: str
+    candidates: tuple[TableKey, ...]
+
+
+@dataclass(slots=True)
+class Evidence:
+    """The evidence of every query, combined."""
+
+    tables: dict[TableKey, TableEvidence]
+    ambiguous: list[AmbiguousColumn]
+
+
+def combine(traces: Sequence[Trace]) -> Evidence:
     """Count each table's and column's evidence across the traces of the queries ichnos read."""
     tables: defaultdict[TableKey, TableEvidence] = defaultdict(TableEvidence)
+    ambiguous: dict[AmbiguousColumn, None] = {}
     for index, trace in enumerate(traces):
         for key in trace.reads:
             tables[key].read.add(index)
@@ -44,9 +62,11 @@ def combine(traces: Sequence[Trace]) -> dict[TableKey, TableEvidence]:
             tables[trace.target].write.add(index)
         for ref in trace.refs:
             candidates = ref.candidates[0]
-            # An unqualified column with several candidate tables gives no evidence (ADR 0001).
             if len(candidates) == 1:
                 tables[candidates[0]].columns[ref.name].references[ref.position].add(
                     index
                 )
-    return dict(tables)
+            else:
+                # The reference gives evidence to no candidate (ADR 0001).
+                ambiguous[AmbiguousColumn(index, ref.name, candidates)] = None
+    return Evidence(dict(tables), list(ambiguous))

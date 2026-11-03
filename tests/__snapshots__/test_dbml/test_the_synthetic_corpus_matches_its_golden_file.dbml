@@ -6,7 +6,7 @@ Project ichnos {
   '''
 }
 
-Table CUSTOMERS [read: 1] {
+Table CUSTOMERS [read: 1, ambiguity: '003_orders_comma_join_synonyms: CUSTOMERS may be SALES.CUSTOMERS (11)'] {
   CUSTOMER_ID unknown [join: 1]
   CUSTOMER_NAME unknown [select: 1]
   CUSTOMER_TYPE unknown [select: 1, where: 1]
@@ -20,19 +20,19 @@ Table EMP [read: 1] {
   LAST_NAME unknown [select: 1]
 }
 
-Table ORDERS [read: 1] {
+Table ORDERS [read: 1, ambiguity: '003_orders_comma_join_synonyms: ORDERS may be SALES.ORDERS (20)'] {
   CUSTOMER_ID unknown [join: 1]
   ORDER_DATE unknown [select: 1]
   ORDER_ID unknown [select: 1]
 }
 
-Table ORDER_LINES [read: 1] {
+Table ORDER_LINES [read: 1, ambiguity: '040_products_per_order: ORDER_LINES may be SALES.ORDER_LINES (9)'] {
   LINE_NO unknown [order_by: 1]
   ORDER_ID unknown [select: 1, group_by: 1]
   PRODUCT_ID unknown [join: 1]
 }
 
-Table PRODUCTS [read: 1] {
+Table PRODUCTS [read: 1, ambiguity: '040_products_per_order: PRODUCTS may be INV.PRODUCTS (7)'] {
   PRODUCT_ID unknown [join: 1]
   SKU unknown [aggregate: 1]
 }
@@ -161,7 +161,7 @@ Table REF.CURRENCIES [read: 1] {
   CURRENCY_NAME unknown [select: 1, group_by: 1]
 }
 
-Table SALES.CUSTOMERS [read: 11] {
+Table SALES.CUSTOMERS [read: 11, ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
   ACCOUNT_MANAGER_ID unknown [join: 1]
   CREATED_AT unknown [select: 1, where: 1]
   CUSTOMER_ID unknown [select: 6, join: 6, group_by: 1]
@@ -183,7 +183,7 @@ Table SALES.MV_DAILY_SALES [read: 1] {
   SALES_DATE unknown [select: 1, where: 1, order_by: 1]
 }
 
-Table SALES.ORDERS [read: 19, write: 1] {
+Table SALES.ORDERS [read: 19, write: 1, ambiguity: '016_unqualified_columns_in_join: CREDIT_LIMIT is SALES.ORDERS.CREDIT_LIMIT (0) or SALES.CUSTOMERS.CREDIT_LIMIT (0); 016_unqualified_columns_in_join: CUSTOMER_NAME is SALES.ORDERS.CUSTOMER_NAME (0) or SALES.CUSTOMERS.CUSTOMER_NAME (8); 016_unqualified_columns_in_join: ORDER_DATE is SALES.ORDERS.ORDER_DATE (13) or SALES.CUSTOMERS.ORDER_DATE (0); 016_unqualified_columns_in_join: ORDER_ID is SALES.ORDERS.ORDER_ID (16) or SALES.CUSTOMERS.ORDER_ID (0); 016_unqualified_columns_in_join: ORDER_TOTAL is SALES.ORDERS.ORDER_TOTAL (7) or SALES.CUSTOMERS.ORDER_TOTAL (0)'] {
   BILL_TO_ADDRESS_ID unknown [join: 1, insert: 1]
   CREATED_AT unknown [insert: 1]
   CURRENCY_CODE unknown [select: 3, join: 1, insert: 1]
