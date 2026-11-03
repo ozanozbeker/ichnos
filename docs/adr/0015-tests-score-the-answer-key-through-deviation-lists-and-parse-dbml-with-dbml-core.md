@@ -113,7 +113,7 @@ The extension calls `assert_dbml_valid` on every text it compares, so no golden 
 
 Two more checks compare with the golden DBML file:
 
-- A subprocess test in every OS of the test matrix compares its `-o` file with it.
+- A subprocess test in the `test` job compares its `-o` file with it.
 - The `uvx` job of [issue 16](https://github.com/ozanozbeker/ichnos/issues/16) compares its output with it, using `git diff --no-index --exit-code`.
   The job resolves the newest sqlglot patch with no lock, so it catches a patch that changes the output before a user runs it.
 
@@ -137,9 +137,10 @@ In-process tests call the cyclopts app with `capsys`.
 One parametrized test covers each exit code and each of ichnos's stderr lines as exact text, including the budget line, the unparsed line, and a bug that exits 1 with its traceback.
 A cyclopts usage error asserts only exit code 2 and a non-empty stderr, because the `lowest` job runs cyclopts's floor, whose wording can differ.
 
-Subprocess tests run `python -m ichnos` in every OS of the test matrix, over a corpus that holds `é` in an observed value and in a quoted name.
+Subprocess tests run `python -m ichnos` in the `test` job, over a corpus that holds `é` in an observed value and in a quoted name.
 They assert that stdout and the `-o` file hold the same bytes, in UTF-8 with no BOM and no `\r`.
 These tests alone check `reconfigure` on a real Windows pipe.
+CI runs on Ubuntu only ([CONTRIBUTING.md](../../CONTRIBUTING.md)), so they check it only when run on a Windows machine.
 
 ## The real corpus
 
