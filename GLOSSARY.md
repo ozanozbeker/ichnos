@@ -52,6 +52,10 @@ _Avoid_: hidden schema, real schema, ground truth
 
 **Answer key**: A true schema, or the true lineage of a corpus, written down so ichnos's output can be scored against it.
 
+**Deviation**: One expected difference between ichnos's claims and an answer key: a miss, an extra claim, or an ambiguity whose candidates include the true answer.
+Each one is listed with its reason.
+_Avoid_: known failure, exception, error
+
 **Owner**: Oracle's namespace for tables, such as `HR` or `SALES`.
 Oracle and DBML both also call it a schema, and this glossary does not.
 _Avoid_: schema (for the namespace)
