@@ -16,10 +16,10 @@ from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.schema import MappingSchema
 
+import ichnos
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    import ichnos
 
 FIXTURE = Path(__file__).parent / "fixtures" / "oracle_synthetic"
 QUERIES = FIXTURE / "queries"
@@ -399,7 +399,8 @@ def _relationship_subject(relationship: ichnos.Relationship) -> str:
 def _score_ambiguities(
     graph: ichnos.Graph, key: AnswerKey, claimed: set[tuple[Name, str]]
 ) -> Iterator[Deviation]:
-    for ambiguity in graph.ambiguities:
+    # The lineage scorer scores a dependency ambiguity.
+    for ambiguity in (a for a in graph.ambiguities if a.kind != "dependency"):
         truths = _truths(ambiguity, key)
         query = "" if ambiguity.query is None else f"{ambiguity.query.name}: "
         subject = f"{query}{ambiguity.subject}"
@@ -438,4 +439,125 @@ def schema_deviations() -> dict[Deviation, str]:
         rows = list(csv.DictReader(file))
     return {
         Deviation(r["claim"], r["subject"], r["outcome"]): r["reason"] for r in rows
+    }
+
+
+LINEAGE_COLUMNS = (
+    "file",
+    "statement",
+    "downstream_table",
+    "downstream_column",
+    "upstream_table",
+    "upstream_column",
+    "type",
+    "subtype",
+)
+type Row = tuple[str, ...]
+_DIRECT = {"IDENTITY", "TRANSFORMATION", "AGGREGATION"}
+
+
+def _table_name(table: ichnos.Table, key: AnswerKey) -> str:
+    """Return a table's name as `lineage.csv` writes it: through its synonym, with any database link."""
+    name, _, link = table.name.partition("@")
+    resolved = key.resolve(table.owner, name)
+    owner, base = resolved if resolved is not None else (table.owner, name)
+    return f"{owner}.{base}" + (f"@{link}" if link else "") if owner else base
+
+
+def _end(
+    end: ichnos.Table | ichnos.Column | ichnos.Report | ichnos.OutputColumn,
+    key: AnswerKey,
+) -> tuple[str, str]:
+    match end:
+        case ichnos.Table():
+            return _table_name(end, key), ""
+        case ichnos.Column():
+            return _table_name(end.table, key), end.name
+        case ichnos.Report():
+            return "", ""
+        case ichnos.OutputColumn():
+            return "", end.name
+
+
+def lineage_found(graph: ichnos.Graph, key: AnswerKey) -> set[Row]:
+    """Return one row per subtype per query behind each dependency, in `lineage.csv`'s columns."""
+    rows: set[Row] = set()
+    for dependency in graph.dependencies:
+        upstream = _end(dependency.upstream, key)
+        downstream = _end(dependency.downstream, key)
+        for subtype, queries in dependency.subtypes.items():
+            kind = "DIRECT" if subtype in _DIRECT else "INDIRECT"
+            for query in queries:
+                rows.add(
+                    (
+                        f"{query.file}.sql",
+                        str(query.position),
+                        *downstream,
+                        *upstream,
+                        kind,
+                        subtype,
+                    )
+                )
+    return rows
+
+
+def _ambiguous(
+    graph: ichnos.Graph, key: AnswerKey
+) -> list[tuple[ichnos.Ambiguity, tuple[str, str]]]:
+    """Return each dependency ambiguity with its downstream end."""
+    found: list[tuple[ichnos.Ambiguity, tuple[str, str]]] = []
+    ends: list[ichnos.Table | ichnos.Column | ichnos.Report | ichnos.OutputColumn] = [
+        *graph.tables,
+        *(c for t in graph.tables for c in t.columns),
+        *graph.reports,
+        *(c for r in graph.reports for c in r.output_columns),
+    ]
+    found.extend(
+        (ambiguity, _end(end, key))
+        for end in ends
+        for ambiguity in end.ambiguities
+        if ambiguity.kind == "dependency"
+    )
+    return found
+
+
+def score_lineage(
+    graph: ichnos.Graph, key: AnswerKey, kinds: set[str]
+) -> Iterator[tuple[Row, str]]:
+    """Yield each `lineage.csv` row of the given types that is not a `match`, and each row ichnos claims that the key lacks."""
+    expected = {
+        tuple(r[c] for c in LINEAGE_COLUMNS)
+        for r in lineage_rows()
+        if r["type"] in kinds
+    }
+    found = {r for r in lineage_found(graph, key) if r[6] in kinds}
+    ambiguous: set[Row] = set()
+    for ambiguity, (table, column) in _ambiguous(graph, key):
+        query = ambiguity.query
+        assert query is not None
+        candidates = set()
+        for name in ambiguity.candidates:
+            *owner, table_name, upstream = name.split(".")
+            resolved = key.resolve(owner[0] if owner else None, table_name)
+            candidates.add((".".join(resolved) if resolved else table_name, upstream))
+        ambiguous |= {
+            r
+            for r in expected
+            if r[:4] == (f"{query.file}.sql", str(query.position), table, column)
+            and (r[4], r[5]) in candidates
+        }
+    for row in sorted(expected - found):
+        yield row, "ambiguous" if row in ambiguous else "miss"
+    for row in sorted(found - expected):
+        yield row, "extra"
+
+
+def lineage_deviations() -> dict[tuple[Row, str], str]:
+    path = ANSWER_KEY / "lineage_deviations.csv"
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    return {
+        (tuple(r[c] for c in LINEAGE_COLUMNS), r["outcome"]): r["reason"] for r in rows
     }

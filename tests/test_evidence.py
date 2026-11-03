@@ -90,7 +90,8 @@ def test_an_ambiguous_reference_counts_for_no_candidate():
             "b": "SELECT order_id FROM sales.orders o, sales.customers c",
         }
     )
-    [ambiguity] = graph.ambiguities
+    ambiguity, dependency = graph.ambiguities
+    assert (dependency.kind, dependency.subject) == ("dependency", "ORDER_ID")
     assert ambiguity.query is not None
     assert (ambiguity.kind, ambiguity.query.name, ambiguity.subject) == (
         "column",

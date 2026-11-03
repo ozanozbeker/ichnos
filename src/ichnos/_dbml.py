@@ -4,22 +4,26 @@ The graph module holds the records, and this module turns them into text that `@
 """
 
 import re
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from ichnos._graph import (
     Ambiguity,
     Column,
+    Dependency,
     Graph,
     IchnosError,
     Key,
+    OutputColumn,
     Relationship,
     Report,
+    Rollup,
     Table,
     count,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from ichnos._read import Position, Type
 
@@ -80,16 +84,102 @@ def dbml(graph: Graph) -> str:
     if graph.relationships:
         blocks.append("\n".join(_ref(r) for r in graph.relationships))
     blocks += [_report(r) for r in graph.reports]
+    blocks += _self_dependencies(graph.dependencies)
+    blocks += _deps(graph)
     return "\n\n".join(blocks) + "\n"
+
+
+def _self_dependencies(dependencies: Iterable[Dependency]) -> list[str]:
+    """Write each column that depends on itself as a property, because DBML raises on `t.a -> t.a` (ADR 0011)."""
+    return [
+        f"Metadata Column {_endpoint_of(d.upstream)} {{\n"
+        f"  self_dependency: {_value(_subtype_list(d))}\n}}"
+        for d in dependencies
+        if d.upstream == d.downstream
+    ]
+
+
+def _subtype_list(dependency: Dependency) -> str:
+    return ", ".join(f"{s} {count(q)}" for s, q in dependency.subtypes.items())
+
+
+def _deps(graph: Graph) -> list[str]:
+    """Write the `Dep` lines, grouped by downstream table or report, each group's rollups first (ADR 0011)."""
+    groups: list[str] = []
+    rollups: dict[Table | Report, list[Rollup]] = defaultdict(list)
+    for rollup in graph.rollups:
+        rollups[rollup.downstream].append(rollup)
+    for downstream, found in rollups.items():
+        lines: list[str] = []
+        for rollup in found:
+            # A dependency stored between two tables shares its rollup's edge (ADR 0011).
+            stored = next(
+                (
+                    d
+                    for d in rollup.dependencies
+                    if d.downstream is downstream and d.upstream is rollup.upstream
+                ),
+                None,
+            )
+            counts = [("queries", count(rollup.queries))]
+            counts += [
+                (s.lower(), count(q))
+                for s, q in (stored.subtypes.items() if stored else ())
+            ]
+            lines.append(
+                f"Dep: {_endpoint_of(rollup.upstream)} -> {_endpoint_of(downstream)}{_settings(counts)}"
+            )
+        for dependency in graph.dependencies:
+            stored = (
+                isinstance(dependency.upstream, Table)
+                and dependency.downstream is downstream
+            )
+            if (
+                _holder(dependency.downstream) is not downstream
+                or stored
+                or dependency.upstream == dependency.downstream
+            ):
+                continue
+            counts = [(s.lower(), count(q)) for s, q in dependency.subtypes.items()]
+            lines.append(
+                f"Dep: {_endpoint_of(dependency.upstream)} -> {_endpoint_of(dependency.downstream)}{_settings(counts)}"
+            )
+        groups.append("\n".join(lines))
+    return groups
+
+
+def _holder(end: Table | Column | Report | OutputColumn) -> Table | Report:
+    match end:
+        case Column():
+            return end.table
+        case OutputColumn():
+            return end.report
+        case _:
+            return end
+
+
+def _endpoint_of(end: Table | Column | Report | OutputColumn) -> str:
+    """Write a dependency end as DBML names it: a table, a column, or a report in the schema `report`."""
+    match end:
+        case Table():
+            return _table_name(end)
+        case Column():
+            return f"{_table_name(end.table)}.{_name(end.name)}"
+        case Report():
+            return f"{_REPORTS}.{_name(end.name)}"
+        case OutputColumn():
+            return f"{_REPORTS}.{_name(end.report.name)}.{_name(end.name)}"
 
 
 def _report(report: Report) -> str:
     """Write a report as a table in the schema `report`, because a `Dep` endpoint must be a table (ADR 0009)."""
     lines = [
         f"  {_name(c.name)} {_name('|'.join(t for t in _TYPES if t in c.types) or 'unknown')}"
+        f"{_settings([('ambiguity', '; '.join(_ambiguity(a) for a in c.ambiguities))])}"
         for c in report.output_columns
     ] or ['  "*" unknown']
-    head = f"Table {_REPORTS}.{_name(report.name)} [kind: 'report']"
+    ambiguity = "; ".join(_ambiguity(a) for a in report.ambiguities)
+    head = f"Table {_REPORTS}.{_name(report.name)}{_settings([('kind', 'report'), ('ambiguity', ambiguity)])}"
     return f"{head} {{\n" + "\n".join(lines) + "\n}"
 
 
@@ -204,6 +294,12 @@ def _column(column: Column) -> str:
         ),
         ("observed_count", len(observed) if len(observed) > _OBSERVED else 0),
         ("undeclared", column.undeclared),
+        (
+            "ambiguity",
+            "; ".join(
+                _ambiguity(a) for a in column.ambiguities if a.kind == "dependency"
+            ),
+        ),
     ]
     null = ["null"] if column.nullable else []
     return f"  {_name(column.name)} {_name(type_)}{_settings(settings, null)}"
@@ -223,7 +319,8 @@ def _ambiguity(ambiguity: Ambiguity) -> str:
         f"{name} ({count(q)})" for name, q in ambiguity.candidates.items()
     )
     verb = "may be" if ambiguity.kind == "owner" else "is"
-    reading = f"{ambiguity.subject} {verb} {candidates}"
+    upstream = "upstream " if ambiguity.kind == "dependency" else ""
+    reading = f"{upstream}{ambiguity.subject} {verb} {candidates}"
     return reading if ambiguity.query is None else f"{ambiguity.query.name}: {reading}"
 
 

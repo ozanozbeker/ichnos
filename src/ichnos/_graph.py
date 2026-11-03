@@ -8,13 +8,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
-from ichnos import _infer, _read
+from ichnos import _infer, _lineage, _read
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from ichnos._infer import ContradictionReason
-    from ichnos._read import KeyShape, Position, TableKind, Type
+    from ichnos._read import KeyShape, Position, Subtype, TableKind, Type
 
 
 class IchnosError(Exception):
@@ -102,7 +102,7 @@ class UnparsedQuery:
     error: str = field(compare=False)
 
 
-type AmbiguityKind = Literal["column", "owner", "declaration", "type"]
+type AmbiguityKind = Literal["column", "owner", "declaration", "type", "dependency"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,11 +115,13 @@ class Ambiguity:
         What the readings differ on. `"column"` is an unqualified column that several tables can hold,
         `"owner"` is a table with no owner that shares its name with tables that have one,
         `"declaration"` is a table that creating queries declare in more than one way,
-        and `"type"` is a column with evidence for two types.
+        `"type"` is a column with evidence for two types,
+        and `"dependency"` is an unqualified upstream column that several tables can hold.
     query
         The query that holds the ambiguity, or `None` for a `"declaration"` or `"type"` ambiguity, which spans queries.
     subject
         The name that the readings differ on, such as the column `ORDER_ID` or the table `CUSTOMERS`.
+        A `"dependency"` ambiguity names its upstream column, and its downstream end lists it.
     candidates
         Each candidate's name, such as `SALES.ORDERS.ORDER_ID`, with the queries behind it.
         Those queries give the candidate its own evidence count, and the ambiguity's query is never among them.
@@ -438,6 +440,8 @@ class OutputColumn:
         The position in the select list, counted from 1, after each `*` expands.
     types
         The type of an expression with a fixed type, with the report's query behind it.
+    ambiguities
+        Each dependency ambiguity whose downstream end is the output column.
 
     Examples
     --------
@@ -455,6 +459,7 @@ class OutputColumn:
     name: str
     position: int = field(compare=False)
     types: Mapping[Type, tuple[Query, ...]] = field(compare=False, repr=False)
+    ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,6 +476,8 @@ class Report:
         The query.
     output_columns
         The output columns, in position order.
+    ambiguities
+        Each dependency ambiguity whose downstream end is the report itself.
 
     Examples
     --------
@@ -484,6 +491,71 @@ class Report:
     name: str
     query: Query = field(compare=False, repr=False)
     output_columns: tuple[OutputColumn, ...] = field(compare=False, repr=False)
+    ambiguities: tuple[Ambiguity, ...] = field(compare=False, repr=False)
+
+
+type End = Table | Column | Report | OutputColumn
+
+
+@dataclass(frozen=True, slots=True)
+class Dependency:
+    """An inferred claim that a downstream end is derived from an upstream end, or that the upstream end selects its rows (ADR 0010).
+
+    Attributes
+    ----------
+    upstream
+        A table or a column.
+    downstream
+        A table, a column, a report or an output column.
+    subtypes
+        The queries behind each OpenLineage transformation subtype, each an evidence kind.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer({"q": "SELECT o.status AS state FROM sales.orders o"})
+    graph.dependencies
+    ```
+    """
+
+    upstream: Table | Column
+    downstream: End
+    subtypes: Mapping[Subtype, tuple[Query, ...]] = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class Rollup:
+    """A dependency between two tables, or a table and a report, that holds wherever another dependency joins them.
+
+    Attributes
+    ----------
+    upstream
+        The table that the dependencies read.
+    downstream
+        The table or report that they feed.
+    queries
+        The queries that hold one of the dependencies. Its evidence count is the number of distinct texts among them.
+    dependencies
+        The dependencies that the rollup joins.
+
+    Examples
+    --------
+    ```python
+    import ichnos
+
+    graph = ichnos.infer(
+        {"q": "CREATE TABLE m.t AS SELECT o.status FROM sales.orders o"}
+    )
+    graph.rollups
+    ```
+    """
+
+    upstream: Table
+    downstream: Table | Report
+    queries: tuple[Query, ...] = field(compare=False, repr=False)
+    dependencies: tuple[Dependency, ...] = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,6 +570,10 @@ class Graph:
         Every relationship, by the first side's table and columns.
     reports
         Every report, by file key and then by position.
+    dependencies
+        Every dependency, grouped by its downstream end, with tables before reports.
+    rollups
+        Every rollup, by its downstream end and then its upstream table.
     queries
         Every query that ichnos read, by file key and then by position.
     unparsed
@@ -518,6 +594,8 @@ class Graph:
     tables: tuple[Table, ...]
     relationships: tuple[Relationship, ...]
     reports: tuple[Report, ...]
+    dependencies: tuple[Dependency, ...]
+    rollups: tuple[Rollup, ...]
     queries: tuple[Query, ...]
     unparsed: tuple[UnparsedQuery, ...]
     ambiguities: tuple[Ambiguity, ...]
@@ -583,10 +661,22 @@ def infer(files: Mapping[str, str]) -> Graph:
             )
         else:
             read.append(query)
-    return _Builder(read, _infer.combine(traces)).graph(unparsed)
+    evidence = _infer.combine(traces)
+    return _Builder(read, evidence, _lineage.lineage(traces, evidence)).graph(unparsed)
 
 
 _TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+_SUBTYPES: tuple[Subtype, ...] = (
+    "IDENTITY",
+    "TRANSFORMATION",
+    "AGGREGATION",
+    "JOIN",
+    "FILTER",
+    "GROUP_BY",
+    "SORT",
+    "WINDOW",
+    "CONDITIONAL",
+)
 
 
 def _fold(name: str) -> str:
@@ -601,6 +691,64 @@ _SHAPES: tuple[KeyShape, ...] = ("generated", "merge", "single_row", "grouped")
 
 def _order(table: Table) -> tuple[str, str]:
     return (table.owner or "", table.name)
+
+
+def _holder(end: End) -> Table | Report:
+    """Return the table or report that an end belongs to."""
+    match end:
+        case Column():
+            return end.table
+        case OutputColumn():
+            return end.report
+        case _:
+            return end
+
+
+def _end_order(end: End) -> tuple[int, str, str, int, str]:
+    """Sort tables before reports, then by name, with a table or report before its columns."""
+    holder = _holder(end)
+    column = isinstance(end, Column | OutputColumn)
+    if isinstance(holder, Table):
+        return (
+            0,
+            holder.owner or "",
+            holder.name,
+            int(column),
+            end.name if column else "",
+        )
+    return (1, "", holder.name, int(column), end.name if column else "")
+
+
+def _dependency_order(dependency: Dependency) -> tuple[object, ...]:
+    return (_end_order(dependency.downstream), _end_order(dependency.upstream))
+
+
+def _rollups(dependencies: tuple[Dependency, ...]) -> tuple[Rollup, ...]:
+    """Join two tables, or a table and a report, wherever a dependency joins them (ADR 0010)."""
+    grouped: dict[tuple[Table, Table | Report], list[Dependency]] = defaultdict(list)
+    for dependency in dependencies:
+        upstream = _holder(dependency.upstream)
+        assert isinstance(upstream, Table)  # noqa: S101 # an upstream end is a table or a column
+        grouped[upstream, _holder(dependency.downstream)].append(dependency)
+    rollups = [
+        Rollup(
+            upstream,
+            downstream,
+            tuple(
+                sorted(
+                    {q for d in found for qs in d.subtypes.values() for q in qs},
+                    key=lambda q: q.name,
+                )
+            ),
+            tuple(found),
+        )
+        for (upstream, downstream), found in grouped.items()
+    ]
+    return tuple(
+        sorted(
+            rollups, key=lambda r: (_end_order(r.downstream), _end_order(r.upstream))
+        )
+    )
 
 
 def _key_of(columns: tuple[Column, ...]) -> Key | None:
@@ -653,9 +801,12 @@ def _name(owner: str | None, *names: str) -> str:
 class _Builder:
     """Turn combined evidence into linked records, whose cycles need each record built before the next."""
 
-    def __init__(self, queries: list[Query], evidence: _infer.Evidence) -> None:
+    def __init__(
+        self, queries: list[Query], evidence: _infer.Evidence, lineage: _lineage.Lineage
+    ) -> None:
         self.queries = queries
         self.evidence = evidence
+        self.lineage = lineage
         self.ambiguities: dict[object, list[Ambiguity]] = defaultdict(list)
 
     def records(self, indices: Iterable[int]) -> tuple[Query, ...]:
@@ -667,6 +818,7 @@ class _Builder:
             *self._owner_ambiguities(),
             *self._declaration_ambiguities(),
             *self._type_ambiguities(),
+            *self._dependency_ambiguities(),
         ]
         # An ambiguity that spans queries sorts after every query's own.
         order = {query: index for index, query in enumerate(self.queries)}
@@ -681,29 +833,94 @@ class _Builder:
         keys = sorted(self.evidence.tables, key=lambda k: (k[0] or "", k[1]))
         tables = tuple(self._table(key) for key in keys)
         relationships = self._relationships({(t.owner, t.name): t for t in tables})
+        reports = tuple(self._report(r) for r in self.evidence.reports)
+        dependencies = self._dependencies(tables, reports)
         return Graph(
             tables,
             relationships,
-            tuple(self._report(r) for r in self.evidence.reports),
+            reports,
+            dependencies,
+            _rollups(dependencies),
             tuple(self.queries),
             tuple(unparsed),
             tuple(ambiguities),
         )
 
+    def _dependency_ambiguities(self) -> list[Ambiguity]:
+        ambiguities: list[Ambiguity] = []
+        for found in self.lineage.ambiguous:
+            candidates: dict[str, tuple[Query, ...]] = {}
+            for key in found.candidates:
+                column = self.evidence.tables[key].columns.get(found.name)
+                indices = (
+                    set().union(column.declared, *column.references.values())
+                    if column
+                    else set()
+                )
+                candidates[_name(*key, found.name)] = self.records(
+                    indices - {found.index}
+                )
+            ambiguity = Ambiguity(
+                "dependency", self.queries[found.index], found.name, candidates
+            )
+            ambiguities.append(ambiguity)
+            downstream = found.downstream
+            match downstream:
+                case ("column", key, name):
+                    self.ambiguities[(key, name)].append(ambiguity)
+                case ("table", key):
+                    self.ambiguities[key].append(ambiguity)
+                case _:
+                    self.ambiguities[downstream].append(ambiguity)
+        return ambiguities
+
     def _report(self, evidence: _infer.ReportEvidence) -> Report:
         query = self.queries[evidence.index]
-        report = Report(query.name, query, ())
+        report = Report(
+            query.name, query, (), tuple(self.ambiguities[("report", evidence.index)])
+        )
         columns = tuple(
             OutputColumn(
                 report,
                 name,
                 position,
                 {} if fact.type is None else {fact.type: (query,)},
+                tuple(self.ambiguities[("output", evidence.index, name)]),
             )
             for position, (name, fact) in enumerate(evidence.outputs, 1)
         )
         object.__setattr__(report, "output_columns", columns)
         return report
+
+    def _dependencies(
+        self, tables: tuple[Table, ...], reports: tuple[Report, ...]
+    ) -> tuple[Dependency, ...]:
+        by_key = {(t.owner, t.name): t for t in tables}
+        by_index = {self.queries.index(r.query): r for r in reports}
+
+        def end(found: _lineage.End) -> End:
+            match found:
+                case ("table", key):
+                    return by_key[key]
+                case ("column", key, name):
+                    return next(c for c in by_key[key].columns if c.name == name)
+                case ("report", index):
+                    return by_index[index]
+                case ("output", index, name):
+                    return next(
+                        c for c in by_index[index].output_columns if c.name == name
+                    )
+
+        dependencies = [
+            Dependency(
+                upstream,
+                end(downstream),
+                {s: self.records(found[s]) for s in _SUBTYPES if s in found},
+            )
+            for (up, downstream), found in self.lineage.dependencies.items()
+            if isinstance(upstream := end(up), Table | Column)
+        ]
+        return tuple(sorted(dependencies, key=_dependency_order))
 
     def _relationships(
         self, tables: dict[_read.TableKey, Table]
