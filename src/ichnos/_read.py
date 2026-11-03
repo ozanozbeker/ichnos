@@ -392,12 +392,8 @@ class _Walker:
         column: str | None = None,
         position: int | None = None,
     ) -> None:
-        """Record that each direct dependency feeds one downstream end."""
-        self.flows.extend(
-            Flow(up, sub, table, column, position)
-            for up, sub in deps
-            if sub in _DIRECT and not (isinstance(up, Whole) and not up.star)
-        )
+        """Record that each dependency feeds one downstream end."""
+        self.flows.extend(Flow(up, sub, table, column, position) for up, sub in deps)
 
     def report(self, local: _LocalSource) -> None:
         """Record the lineage of a report: each output position, and what selects its rows."""
