@@ -95,11 +95,12 @@ class _Mapper:
                     for c, n in zip(columns, names, strict=True)
                 ]
             return [(("table", upstream.table), fallback)]
-        # `_read` records no flow from the whole rows that a `COUNT(*)` reads.
-        assert not isinstance(upstream, Whole)  # noqa: S101
         return [(self._upstream(upstream), fallback)]
 
-    def _upstream(self, upstream: ColumnRef) -> End | _Unsettled:
+    def _upstream(self, upstream: ColumnRef | Whole) -> End | _Unsettled:
+        if isinstance(upstream, Whole):
+            # COUNT(*) reads whole rows, so it depends on the table (ADR 0010).
+            return ("table", upstream.table)
         candidates = self.declarations.settle(upstream)
         if len(candidates) > 1:
             # An ambiguous upstream column gives evidence to no candidate (ADR 0001).
@@ -110,15 +111,19 @@ class _Mapper:
         self, index: int, trace: Trace, flow: Flow
     ) -> tuple[tuple[End, ...] | None, End]:
         """Return the ends of a flow's item, one per column it writes, and the one end the flow takes otherwise."""
-        # Every direct flow names a column, or an output column or a value by its position.
         if flow.table is None:
-            names = self.reports[index].items[flow.position or 0]
+            if flow.position is None:
+                return None, ("report", index)
+            names = self.reports[index].items[flow.position]
             outputs: tuple[End, ...] = tuple(("output", index, n) for n in names)
             return outputs, outputs[0] if len(outputs) == 1 else ("report", index)
         table = flow.table
         if flow.column is not None:
             return None, ("column", table, flow.column)
-        names = self._item(trace, table, flow.position or 0)
+        if flow.position is None:
+            # A clause of the query selects which rows it writes (ADR 0010).
+            return None, ("table", table)
+        names = self._item(trace, table, flow.position)
         if names is None:
             # A value that maps to no column depends on the written table (ADR 0010).
             return None, ("table", table)

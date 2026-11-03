@@ -524,6 +524,16 @@ class Dependency:
     downstream: End
     subtypes: Mapping[Subtype, tuple[Query, ...]] = field(compare=False, repr=False)
 
+    @property
+    def direct(self) -> bool:
+        """Whether the dependency holds a direct subtype: `IDENTITY`, `TRANSFORMATION` or `AGGREGATION`."""
+        return any(s in _DIRECT for s in self.subtypes)
+
+    @property
+    def indirect(self) -> bool:
+        """Whether the dependency holds an indirect subtype, such as `JOIN` or `FILTER`."""
+        return any(s not in _DIRECT for s in self.subtypes)
+
 
 @dataclass(frozen=True, slots=True)
 class Rollup:
@@ -666,6 +676,7 @@ def infer(files: Mapping[str, str]) -> Graph:
 
 
 _TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
+_DIRECT: frozenset[Subtype] = frozenset({"IDENTITY", "TRANSFORMATION", "AGGREGATION"})
 _SUBTYPES: tuple[Subtype, ...] = (
     "IDENTITY",
     "TRANSFORMATION",
