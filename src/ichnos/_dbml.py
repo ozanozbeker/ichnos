@@ -5,7 +5,7 @@ The graph module holds the records, and this module turns them into text that `@
 
 import re
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, overload
 
 from ichnos._graph import (
     Ambiguity,
@@ -18,13 +18,15 @@ from ichnos._graph import (
     Relationship,
     Report,
     Rollup,
+    Slice,
     Table,
     count,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
+    from ichnos._graph import Query
     from ichnos._read import Position, Type
 
 _POSITIONS: tuple[Position, ...] = (
@@ -41,6 +43,11 @@ _POSITIONS: tuple[Position, ...] = (
 _ESCAPES = str.maketrans(
     {"\\": "\\\\", '"': '\\"', "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 )
+type Detail = Literal["compact", "full"]
+
+BUDGET = 8000
+"""The default budget in characters: the only prompt size that Microsoft documents for Copilot Chat."""
+
 _TYPES: tuple[Type, ...] = ("text", "number", "datetime", "interval")
 # Only a quoted lowercase Oracle owner can take this name, and `dbml` raises on one.
 _REPORTS = "report"
@@ -49,13 +56,39 @@ _OBSERVED = 20
 _BARE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def dbml(graph: Graph) -> str:
-    r"""Write the full DBML file of a graph.
+@overload
+def dbml(source: Graph) -> str: ...
+@overload
+def dbml(
+    source: Slice,
+    budget: int = BUDGET,
+    detail: Detail = "compact",
+    examples: bool = False,  # noqa: FBT001, FBT002 # the API's keyword, as ADR 0013 names it
+) -> str: ...
+def dbml(
+    source: Graph | Slice,
+    budget: int = BUDGET,
+    detail: Detail = "compact",
+    examples: bool = False,  # noqa: FBT001, FBT002 # the API's keyword, as ADR 0013 names it
+) -> str:
+    r"""Write the full DBML file of a graph, or a slice under a character budget.
+
+    The full file holds the inferred schema, the reports and the lineage (ADR 0011).
+    A slice holds a header that says what was asked and what the budget cut,
+    and it cuts in ADR 0012's order until it fits, but never below its core.
 
     Parameters
     ----------
-    graph
-        The graph that `infer` or `read` builds.
+    source
+        A graph that `infer` or `read` builds, or a slice that one of its walks returns.
+    budget
+        A slice's most characters. A core over it is written whole, and its header states the core's size.
+        The full file takes no budget. The default is 8,000.
+    detail
+        `"compact"`, the default, drops each column's position counts and type counts, but keeps the type counts of two types.
+        `"full"` writes every count, as the full file does.
+    examples
+        Whether a slice ends with example queries as `//` comments, which count against the budget.
 
     Returns
     -------
@@ -72,10 +105,17 @@ def dbml(graph: Graph) -> str:
     ```python
     import ichnos
 
-    graph = ichnos.infer({"q": "SELECT o.order_id FROM sales.orders o"})
-    print(ichnos.dbml(graph))
+    graph = ichnos.infer(
+        {
+            "q": "SELECT o.order_id FROM sales.orders o JOIN sales.customers c ON c.customer_id = o.customer_id"
+        }
+    )
+    print(ichnos.dbml(graph.neighborhood([graph.table("sales.orders")]), budget=2000))
     ```
     """
+    if isinstance(source, Slice):
+        return _Slicer(source, budget, detail, examples=examples).write()
+    graph = source
     clash = next((t for t in graph.tables if t.owner == _REPORTS), None)
     if clash is not None:
         message = f'the owner "{_REPORTS}" of {clash.name} is the schema that DBML writes reports in'
@@ -186,13 +226,7 @@ def _report(report: Report) -> str:
 def _ref(relationship: Relationship) -> str:
     """Write a relationship as a `Ref` whose name holds its evidence (ADR 0011)."""
     first, second = relationship.sides
-    if relationship.direction is not None:
-        operator = ">?"
-    elif _keyed(first) and _keyed(second):
-        # Two keys give one-to-one, and `?<>?` between two unique columns raises a diagnostic.
-        operator = "?-?"
-    else:
-        operator = "?<>?"
+    operator = _operator(relationship)
     name = f"join {count(relationship.join)}"
     if relationship.shared is not None:
         key = relationship.shared
@@ -229,7 +263,9 @@ def _project(graph: Graph) -> str:
     )
 
 
-def _table(table: Table) -> str:
+def _table(
+    table: Table, columns: Sequence[Column] | None = None, detail: Detail = "full"
+) -> str:
     kinds = dict.fromkeys(d.kind for d in table.declarations)
     contradictions = (
         f"{c.query.name}: {c.reason}{'' if c.column is None else f' {c.column}'}"
@@ -250,7 +286,8 @@ def _table(table: Table) -> str:
             ("ambiguity", "; ".join(_ambiguity(a) for a in table.ambiguities)),
         ]
     )
-    lines = [_column(c) for c in table.columns] or ['  "*" unknown']
+    kept = table.columns if columns is None else columns
+    lines = [_column(c, detail) for c in kept] or ['  "*" unknown']
     if table.keys:
         # ichnos never writes `pk`, because it never claims a primary key (ADR 0006).
         indexes = (f"    {_key_label(k, quote=True)} [unique]" for k in table.keys)
@@ -271,7 +308,7 @@ def _key_basis(key: Key) -> str:
     return ", ".join(basis)
 
 
-def _column(column: Column) -> str:
+def _column(column: Column, detail: Detail = "full") -> str:
     types = [t for t in _TYPES if t in column.types]
     declared = {
         d.types[column.name]
@@ -284,8 +321,11 @@ def _column(column: Column) -> str:
     settings: list[tuple[str, int | str | bool]] = [
         ("declared", count(column.declared))
     ]
-    settings += [(p, count(column.references.get(p, ()))) for p in _POSITIONS]
-    settings += [(t, count(column.types.get(t, ()))) for t in _TYPES]
+    if detail == "full":
+        settings += [(p, count(column.references.get(p, ()))) for p in _POSITIONS]
+    # Compact detail keeps the type counts of two types, because they are the evidence for that ambiguity (ADR 0012).
+    if detail == "full" or "|" in type_:
+        settings += [(t, count(column.types.get(t, ()))) for t in _TYPES]
     settings += [
         ("nullable", count(column.nullable)),
         (
@@ -364,3 +404,212 @@ def _name_quoted(name: str) -> str:
 def _name(name: str) -> str:
     """Quote a name only when DBML needs it."""
     return name if _BARE.fullmatch(name) else f'"{name.translate(_ESCAPES)}"'
+
+
+# --- slices (ADR 0012) -----------------------------------------------------------------------
+
+_LEGEND = {
+    "unknown": "A column with no type evidence has the type `unknown`.",
+    "|": "A column with evidence for two types writes both, such as `text|number`, an ambiguity.",
+    "null": "`null` claims a column can hold NULL. ichnos never claims NOT NULL.",
+    ">?": "`>?` means the left side refers to a key on the right.",
+    "?<>?": "`?<>?` means the direction is unknown.",
+    "?-?": "`?-?` joins two keys.",
+    "complete": "`complete: true` means the declarations list every column.",
+    "undeclared": "`undeclared: true` marks a column that the declarations lack.",
+    "partial": "A table with no `kind` may list only some of its columns.",
+    "report": "The schema `report` holds the reports, which are queries, not tables.",
+}
+
+
+class _Slicer:
+    """Write a slice under its budget, cutting in ADR 0012's order down to its core."""
+
+    def __init__(
+        self, found: Slice, budget: int, detail: Detail, *, examples: bool
+    ) -> None:
+        self.slice = found
+        self.budget = budget
+        self.detail = detail
+        self.kept: dict[Table, tuple[Column, ...]] = {
+            t: tuple(c for c in cs if isinstance(c, Column))
+            for t, cs in found.columns.items()
+            if isinstance(t, Table)
+        }
+        self.examples = _examples(found.relationships) if examples else []
+        self.cut: list[str] = []
+
+    def write(self) -> str:
+        """Cut one step at a time until the text fits, or write the core whole with its size."""
+        text = self.render()
+        for cut in self._cuts():
+            if len(text) <= self.budget:
+                return text
+            cut()
+            text = self.render()
+        if len(text) <= self.budget:
+            return text
+        # The core exceeds the budget, so the header states its size, which the line itself changes.
+        size = len(text)
+        while len(text := self.render(size)) != size:
+            size = len(text)
+        return text
+
+    def render(self, core: int | None = None) -> str:
+        tables = sorted(self.kept, key=lambda t: (self.slice.distances[t], _order(t)))
+        marks: set[str] = set()
+        blocks = [_table(t, self.kept[t], self.detail) for t in tables]
+        for table in tables:
+            marks |= _marks(table, self.kept[table])
+        refs = [
+            r
+            for r in self.slice.relationships
+            if all(s[0].table in self.kept for s in r.sides)
+        ]
+        if refs:
+            blocks.append("\n".join(_ref(r) for r in refs))
+            marks |= {_operator(r) for r in refs}
+        for query in self.examples:
+            lines = query.text.split("\n")
+            blocks.append(
+                "\n".join([f"// {query.name}", *(f"// {line}" for line in lines)])
+            )
+        return "\n\n".join([self._header(marks, core), *blocks]) + "\n"
+
+    def _header(self, marks: set[str], core: int | None) -> str:
+        found = self.slice
+        names = ", ".join(
+            _end_name(s) for s in found.starts if isinstance(s, Table | Report)
+        )
+        total = len(found.graph.tables)
+        tables = len([t for t in found.distances if isinstance(t, Table)])
+        if found.kind == "neighborhood":
+            asked = f"Neighborhood of {names} at depth {found.depth}: {tables} of {total} tables."
+        else:
+            asked = f"Join path between {names}: {tables} of {total} tables."
+        lines = [
+            asked,
+            f"Inferred from {len(found.graph.queries)} queries, with no database connection.",
+        ]
+        lines += [line for mark, line in _LEGEND.items() if mark in marks]
+        if self.cut:
+            lines.append(
+                f"Cut to fit {self.budget:,} characters: {', '.join(self.cut)}."
+            )
+        if core is not None:
+            lines.append(
+                f"The core is {core:,} characters, over the {self.budget:,}-character budget."
+            )
+        outside = [
+            f"{label} {', '.join(_end_name(e) for e in ends)}."
+            for key, label in (
+                ("joins", "Outside the slice, these tables join it:"),
+                ("upstream", "Upstream of the centers:"),
+                ("downstream", "Downstream of the centers:"),
+            )
+            if (ends := found.outside.get(key))
+        ]
+        if found.unconnected:
+            outside.append(
+                f"No relationship connects {', '.join(_end_name(t) for t in found.unconnected)}."
+            )
+        note = "\n".join(f"  {line}" for line in [*lines, *outside])
+        return f"Project ichnos {{\n  database_type: 'Oracle'\n  Note: '''\n{note}\n  '''\n}}"
+
+    def _cuts(self) -> list[Callable[[], None]]:
+        """Return each cut in ADR 0012's order, which `write` applies one at a time."""
+        found = self.slice
+        cuts: list[Callable[[], None]] = [
+            self._drop_example(q) for q in reversed(self.examples)
+        ]
+        movable = sorted(
+            (t for t in self.kept if t not in found.starts),
+            key=lambda t: (
+                -found.distances[t],
+                count((*t.read, *t.write)),
+                [-ord(c) for c in table_name(t)],
+            ),
+        )
+        on_refs = {c for r in found.relationships for side in r.sides for c in side}
+        for table in movable:
+            trimmed = tuple(
+                c
+                for c in table.columns
+                if c in on_refs or any(c in k.columns for k in table.keys)
+            )
+            if trimmed != self.kept[table]:
+                cuts.append(self._trim(table, trimmed))
+        if found.kind == "neighborhood":
+            cuts += [self._drop(t) for t in movable]
+        return cuts
+
+    def _drop_example(self, query: Query) -> Callable[[], None]:
+        def cut() -> None:
+            self.examples.remove(query)
+            self.cut.append(f"the example {query.name}")
+
+        return cut
+
+    def _trim(self, table: Table, columns: tuple[Column, ...]) -> Callable[[], None]:
+        def cut() -> None:
+            self.kept[table] = columns
+            self.cut.append(f"trimmed {table_name(table)}")
+
+        return cut
+
+    def _drop(self, table: Table) -> Callable[[], None]:
+        def cut() -> None:
+            del self.kept[table]
+            self.cut.append(f"dropped {table_name(table)}")
+
+        return cut
+
+
+def _examples(relationships: Sequence[Relationship]) -> list[Query]:
+    """Pick, one at a time, the query that covers the most `Ref` lines no picked query covers (ADR 0012)."""
+    uncovered = set(relationships)
+    picked: list[Query] = []
+    while uncovered:
+        candidates = {q for r in uncovered for q in r.join}
+        best = min(
+            candidates,
+            key=lambda q: (-sum(q in r.join for r in uncovered), len(q.text), q.name),
+        )
+        picked.append(best)
+        uncovered = {r for r in uncovered if best not in r.join}
+    return picked
+
+
+def _marks(table: Table, columns: Sequence[Column]) -> set[str]:
+    """Return the legend marks that one table's text holds."""
+    marks = set() if table.kind is not None else {"partial"}
+    marks |= {"complete"} if table.complete else set()
+    for column in columns:
+        types = [t for t in _TYPES if t in column.types]
+        declared = {
+            d.types[column.name] for d in table.declarations if column.name in d.types
+        }
+        if not declared and not types:
+            marks.add("unknown")
+        if len(declared) != 1 and len(types) > 1:
+            marks.add("|")
+        marks |= {"null"} if column.nullable else set()
+        marks |= {"undeclared"} if column.undeclared else set()
+    return marks
+
+
+def _operator(relationship: Relationship) -> str:
+    """Return a `Ref` operator. Two keys give one-to-one, because `?<>?` between two unique columns raises a diagnostic."""
+    first, second = relationship.sides
+    if relationship.direction is not None:
+        return ">?"
+    return "?-?" if _keyed(first) and _keyed(second) else "?<>?"
+
+
+def _end_name(end: Table | Report) -> str:
+    """Write a slice's start or outside end as the DBML text names it."""
+    return report_name(end) if isinstance(end, Report) else table_name(end)
+
+
+def _order(table: Table) -> tuple[str, str]:
+    return (table.owner or "", table.name)

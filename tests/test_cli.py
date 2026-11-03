@@ -149,3 +149,70 @@ def test_a_budget_below_one_is_a_usage_error(capsys: pytest.CaptureFixture[str])
     code, _, err = _run(capsys, "summary", str(answer_key.QUERIES), "--budget", "0")
     assert code == 2
     assert err
+
+
+def test_neighborhood_and_join_path_mirror_the_api(capsys: pytest.CaptureFixture[str]):
+    graph = ichnos.read(answer_key.QUERIES)
+    code, out, err = _run(
+        capsys,
+        "neighborhood",
+        str(answer_key.QUERIES),
+        "sales.orders",
+        "--depth",
+        "0",
+        "--examples",
+    )
+    assert (code, err) == (0, "")
+    assert out == ichnos.dbml(
+        graph.neighborhood([graph.table("sales.orders")], 0), examples=True
+    )
+    code, out, err = _run(
+        capsys,
+        "join-path",
+        str(answer_key.QUERIES),
+        "ref.countries",
+        "inv.products",
+        "--detail",
+        "full",
+    )
+    assert (code, err) == (0, "")
+    assert out == ichnos.dbml(
+        graph.join_path([graph.table("ref.countries"), graph.table("inv.products")]),
+        detail="full",
+    )
+
+
+def test_a_missing_table_names_up_to_three_close_matches(
+    capsys: pytest.CaptureFixture[str],
+):
+    code, out, err = _run(
+        capsys, "join-path", str(answer_key.QUERIES), "sales.orderz", "zzz"
+    )
+    assert (code, out) == (1, "")
+    assert (
+        err
+        == "ichnos: no table sales.orderz; did you mean SALES.ORDERS or SALES.ORDER_LINES or SALES.V_ORDER_SUMMARY?\n"
+    )
+    assert (
+        _run(capsys, "neighborhood", str(answer_key.QUERIES), "zzz")[2]
+        == "ichnos: no table zzz\n"
+    )
+
+
+def test_a_core_over_the_budget_is_written_whole_with_one_stderr_line(
+    capsys: pytest.CaptureFixture[str],
+):
+    code, out, err = _run(
+        capsys,
+        "neighborhood",
+        str(answer_key.QUERIES),
+        "sales.orders",
+        "--budget",
+        "100",
+    )
+    assert code == 0
+    assert f"The core is {len(out):,} characters, over the 100-character budget." in out
+    assert (
+        err
+        == f"ichnos: the core of this slice is {len(out):,} characters, over the 100-character budget\n"
+    )
