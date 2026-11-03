@@ -10,6 +10,7 @@ A declaration is the one exception, because a creating query states its table's 
 ichnos uses a declaration to remove candidates or settle an ambiguity until a query contradicts it ([ADR 0008](0008-declarations-settle-ambiguities-until-contradicted.md)).
 A settled reference adds evidence like any other.
 The output lists each candidate's own evidence count beside the ambiguity, so the reader weighs it.
+A dependency follows the same rules, with each transformation subtype as its own evidence kind ([ADR 0009](0009-lineage-from-clause-positions-with-openlineage-subtypes.md)).
 
 ## Considered options
 
