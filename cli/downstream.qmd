@@ -1,0 +1,37 @@
+---
+description: Write what a table or a column feeds, as a DBML slice.
+title: ichnos downstream
+---
+
+`ichnos downstream` writes what a table or a column feeds, as a DBML slice.
+It starts at `--table`, or at a column of it through `--column`.
+A report is never an upstream end, so the command takes no `--report`.
+
+## Usage
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("downstream", "--help")
+```
+
+## Example
+
+```{python}
+#| label: example
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos(
+    "downstream",
+    "queries",
+    "--table",
+    "SALES.ORDERS",
+    "--column",
+    "ORDER_ID",
+    "--budget",
+    "2500",
+)
+```

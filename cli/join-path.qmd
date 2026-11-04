@@ -1,0 +1,27 @@
+---
+description: Write the shortest join paths between two or more tables, as a DBML slice.
+title: ichnos join-path
+---
+
+`ichnos join-path` writes the shortest join paths between two or more tables, as a DBML slice.
+The paths are the core of the slice, which ichnos never cuts.
+
+## Usage
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("join-path", "--help")
+```
+
+## Example
+
+```{python}
+#| label: example
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("join-path", "queries", "SALES.ORDERS", "INV.PRODUCTS", "--budget", "2500")
+```

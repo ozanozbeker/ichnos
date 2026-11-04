@@ -1,0 +1,30 @@
+---
+description: Write where a table's, column's, report's or output column's values come from, as a DBML slice.
+title: ichnos upstream
+---
+
+`ichnos upstream` writes where the values of a table, a column, a report or an output column come from, as a DBML slice.
+It starts at exactly one of `--table` and `--report`, and `--column` moves the start to a column of the table or to an output column of the report.
+`--indirect first_hop` keeps the indirect dependencies of the queries that write the start, and `all` keeps every one.
+
+## Usage
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("upstream", "--help")
+```
+
+## Example
+
+The core of this slice exceeds the budget, so ichnos writes it whole and says so on stderr.
+
+```{python}
+#| label: example
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("upstream", "queries", "--report", "055_key_customers", "--budget", "2500")
+```

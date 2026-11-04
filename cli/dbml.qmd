@@ -1,0 +1,29 @@
+---
+description: Write the DBML file of the inferred schema.
+title: ichnos dbml
+---
+
+`ichnos dbml` writes the tables, columns, keys, relationships and lineage that the corpus implies, as one DBML file.
+Every claim carries its evidence counts, and every ambiguity lists its candidates.
+
+## Usage
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("dbml", "--help")
+```
+
+## Example
+
+The example reads one query file, so the schema stays short; a folder gives the schema of every query in it.
+
+```{python}
+#| label: example
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("dbml", "queries/045_create_order_line_facts.sql")
+```

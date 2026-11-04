@@ -18,7 +18,101 @@ seo:
   # great-docs 0.17.0 adds the site name a second time (posit-dev/great-docs#327). Delete this once a release includes #335.
   title_template: "{page_title}"
 
+# The CLI pages run ichnos in code cells, so every build shows the current help text and output instead of a frozen copy.
+freeze: false
+
 user_guide:
   - section: Guide
     contents:
       - upgrading.qmd
+
+# great-docs 0.17.0 documents Click CLIs only, so `cli/` holds one page per cyclopts command that runs `--help` at build time.
+sections:
+  - title: CLI
+    dir: cli
+    navbar_after: User Guide
+    sidebar_groups:
+      - section: Schema
+        contents: [dbml.qmd, summary.qmd]
+      - section: Slices
+        contents: [neighborhood.qmd, join-path.qmd, upstream.qmd, downstream.qmd]
+      - section: Queries
+        contents: [unparsed.qmd]
+
+# The sections follow `GLOSSARY.md`, so a reader finds a claim beside the objects that hold it, not sorted by object type.
+reference:
+  - title: Corpus
+    desc: Read a folder of queries into a graph.
+    contents:
+      - read
+      - infer
+      - name: Graph
+        members: false
+      - Query
+      - UnparsedQuery
+  - title: Walks
+    desc: Look a table or a report up, and select the slice that one question needs.
+    contents:
+      - Graph.table
+      - Graph.report
+      - Graph.neighborhood
+      - Graph.join_path
+      - Graph.upstream
+      - Graph.downstream
+  - title: Schema
+    desc: The tables, columns, keys and relationships that the queries imply.
+    contents:
+      - Table
+      - Column
+      - Key
+      - Relationship
+      - Declaration
+      - Contradiction
+      - Ambiguity
+      - TableKind
+      - Type
+      - Position
+      - KeyShape
+      - NameMatch
+      - AmbiguityKind
+      - ContradictionReason
+  - title: Lineage
+    desc: The reports, and the dependencies that join tables, columns and reports.
+    contents: [Report, OutputColumn, Dependency, Rollup, Subtype]
+  - title: Output
+    desc: Write the graph, a summary or a slice as DBML.
+    contents: [dbml, summary, Slice, SliceKind, Detail, Indirect]
+  - title: Errors
+    desc: The one exception a caller handles.
+    contents: [IchnosError]
+
+# The generated skill lists the API by the sections above; these rows and lines add what an agent cannot read off a signature.
+skill:
+  decision_table:
+    - need: The whole inferred schema, as one DBML file
+      use: ichnos dbml queries -o schema.dbml
+    - need: One line per table and report, to choose what to slice
+      use: ichnos summary queries --keyword status
+    - need: The tables within some relationships of one or more tables
+      use: ichnos neighborhood queries SALES.ORDERS
+    - need: The shortest join paths between two or more tables
+      use: ichnos join-path queries SALES.ORDERS INV.PRODUCTS
+    - need: Where the values of a table, a column or a report come from
+      use: ichnos upstream queries --report 055_key_customers
+    - need: What a table or a column feeds
+      use: ichnos downstream queries --table SALES.ORDERS --column ORDER_ID
+    - need: The queries ichnos could not read
+      use: ichnos unparsed queries
+    - need: The same walk from Python
+      use: graph = read("queries"); dbml(graph.upstream(graph.report("055_key_customers")))
+  gotchas:
+    - "Every claim is inferred and carries its evidence counts: ichnos never claims a primary key, a foreign key, an Oracle data type or `NOT NULL`."
+    - "An observed value is a literal that some query compares with the column or assigns to it; it is never the column's full set of values."
+    - "An ambiguity lists every candidate reading, and ichnos picks none."
+    - "A slice is cut to fit `--budget` down to its core, which ichnos never cuts, so a slice can exceed the budget; stderr says so when it does."
+    - "A file with no BOM that fails UTF-8 decodes as cp1252; `--encoding` names another codec and never overrides a BOM."
+    - "A choice must match exactly: `--indirect first_hop`, not `first-hop`."
+  best_practices:
+    - Run `uvx ichnos` with no install, or `uvx "ichnos[c]"` for compiled sqlglot, which is about 3x faster.
+    - Run `ichnos summary` first, then slice the tables or reports it lists.
+    - Write a slice to a file with `-o` and paste the file; on Windows, PowerShell re-encodes what it pipes.

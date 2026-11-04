@@ -1,0 +1,27 @@
+---
+description: Write the tables within some relationships of one or more centers, as a DBML slice.
+title: ichnos neighborhood
+---
+
+`ichnos neighborhood` writes the tables within `--depth` relationships of one or more center tables, as a DBML slice.
+ichnos cuts the slice to fit `--budget`, down to its core, the centers.
+
+## Usage
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("neighborhood", "--help")
+```
+
+## Example
+
+```{python}
+#| label: example
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("neighborhood", "queries", "SALES.ORDERS", "--budget", "2500")
+```

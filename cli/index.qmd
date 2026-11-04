@@ -1,0 +1,84 @@
+---
+description: One command per API call, over a folder of Oracle queries.
+title: Command line
+---
+
+`ichnos` has one command per API call, so it prints nothing that a Python caller cannot get.
+Every command takes the corpus, a folder of query files or one file, as its first argument, and writes to stdout or to the file that `-o` names.
+
+The examples on these pages run at build time on the synthetic corpus in [`tests/fixtures/oracle_synthetic/queries`](https://github.com/ozanozbeker/ichnos/tree/main/tests/fixtures/oracle_synthetic/queries), under the name `queries`.
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("--help")
+```
+
+## Commands
+
+Each command calls one function or walk of the API:
+
+| Command | Writes | API call |
+| --- | --- | --- |
+| [`dbml`](dbml.qmd) | The DBML file of the inferred schema. | `dbml(graph)` |
+| [`summary`](summary.qmd) | One line per table and report. | `summary(graph, owner=..., keyword=..., budget=...)` |
+| [`neighborhood`](neighborhood.qmd) | The tables within some relationships of one or more centers. | `dbml(graph.neighborhood(...))` |
+| [`join-path`](join-path.qmd) | The shortest join paths between two or more tables. | `dbml(graph.join_path(...))` |
+| [`upstream`](upstream.qmd) | Where the values of a table, a column, a report or an output column come from. | `dbml(graph.upstream(...))` |
+| [`downstream`](downstream.qmd) | What a table or a column feeds. | `dbml(graph.downstream(...))` |
+| [`unparsed`](unparsed.qmd) | Each query that ichnos could not read. | `graph.unparsed` |
+
+## The corpus
+
+In a folder, ichnos reads every file whose suffix is `.sql`, in every subfolder, and skips a file or folder whose name starts with `.`.
+`--suffix` replaces `.sql`, and it can repeat.
+Each file decodes on its own: a BOM picks the codec, a file with no BOM decodes as UTF-8, and a file that fails UTF-8 decodes as cp1252, or as the codec `--encoding` names.
+
+## Options
+
+Each option mirrors an API parameter, with the API's name, values and default:
+
+| Option | Default | Commands |
+| --- | --- | --- |
+| `-o`, `--output PATH` | stdout | every command |
+| `--suffix SUFFIX` | `.sql` | every command |
+| `--encoding NAME` | `cp1252` | every command |
+| `--budget N` | `8000` | [`summary`](summary.qmd) and the slice commands |
+| `--detail compact\|full` | `compact` | the slice commands |
+| `--examples` | off | the slice commands |
+| `--indirect first_hop\|all` | `first_hop` | [`upstream`](upstream.qmd) and [`downstream`](downstream.qmd) |
+| `--depth N` | `1` | [`neighborhood`](neighborhood.qmd) |
+| `--owner NAME` | none | [`summary`](summary.qmd) |
+| `--keyword TEXT` | none | [`summary`](summary.qmd) |
+
+The slice commands are [`neighborhood`](neighborhood.qmd), [`join-path`](join-path.qmd), [`upstream`](upstream.qmd) and [`downstream`](downstream.qmd).
+A choice must match exactly: `--indirect first_hop`, not `first-hop`.
+
+## Output
+
+Every command writes UTF-8 with `\n` line endings, on every OS.
+On Windows, PowerShell re-encodes what it pipes, so write a slice with `-o` and copy the file, as the [README](https://github.com/ozanozbeker/ichnos#paste-a-slice-into-a-chat-on-windows) shows.
+
+## Exit codes
+
+The CLI exits with one of three codes:
+
+- `0`: success.
+- `1`: a user error, as one line `ichnos: <message>` on stderr, with no traceback.
+- `2`: a usage error, such as an unknown option or a missing argument.
+
+A name that matches nothing is a user error, and the message names up to three close matches:
+
+```{python}
+#| label: exit-code
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("neighborhood", "queries", "SALES.ORDER")
+```
+
+Two more lines can go to stderr, and neither changes the exit code.
+When the core of a slice exceeds the budget, ichnos writes the whole slice and says so.
+When any query is unparsed, every command except [`unparsed`](unparsed.qmd) writes one line with the count.
