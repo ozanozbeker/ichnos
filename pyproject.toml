@@ -1,6 +1,6 @@
 [project]
 name = "ichnos"
-version = "0.0.2"
+version = "0.0.3"
 description = "Infer a DBML schema and ERD from SQL queries alone, with no database connection."
 readme = "README.md"
 requires-python = ">=3.14"
