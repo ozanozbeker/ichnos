@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.3](https://github.com/ozanozbeker/ichnos/compare/v0.0.2...v0.0.3) (2026-11-04)
+
+
+### Documentation
+
+* add CLI reference pages and glossary-based API sections ([#90](https://github.com/ozanozbeker/ichnos/issues/90)) ([b2528e7](https://github.com/ozanozbeker/ichnos/commit/b2528e71cd7337e3b050d945185da251522c444d))
+
 ## [0.0.2](https://github.com/ozanozbeker/ichnos/compare/v0.0.1...v0.0.2) (2026-11-03)
 
 
