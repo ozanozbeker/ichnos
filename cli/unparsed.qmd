@@ -1,0 +1,29 @@
+---
+description: List each query that ichnos could not read, with the first line of its error.
+title: ichnos unparsed
+---
+
+`ichnos unparsed` writes one line per query that ichnos could not read whole: its name, a colon, and the first line of its error.
+Every other command writes the count to stderr and leaves the list to this one, so a slice stays clean to paste.
+
+## Usage
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("unparsed", "--help")
+```
+
+## Example
+
+The synthetic corpus parses whole, so the command writes nothing.
+
+```{python}
+#| label: example
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("unparsed", "queries")
+```

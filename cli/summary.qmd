@@ -1,0 +1,27 @@
+---
+description: Write one line per table and report, so you can choose what to slice.
+title: ichnos summary
+---
+
+`ichnos summary` writes one line per table and one per report, so you can choose what to slice.
+`--owner` keeps the tables of one owner and the reports that read one, and `--keyword` keeps the tables and reports whose names, column names or observed values contain it, ignoring case.
+
+## Usage
+
+```{python}
+#| label: help
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("summary", "--help")
+```
+
+## Example
+
+```{python}
+#| label: example
+#| echo: false
+from _scripts.example import ichnos
+
+ichnos("summary", "queries", "--keyword", "customer")
+```
